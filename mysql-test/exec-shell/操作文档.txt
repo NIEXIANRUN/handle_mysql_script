@@ -1,0 +1,6 @@
+1、paramiko-shell 脚本
+通过paramiko模块ssh连接虚机，执行shell指令
+
+2、subporcess_exec_shell 脚本
+通过subprocess模块，建立通道在本机执行shell指令
+

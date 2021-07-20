@@ -1,0 +1,9 @@
+1、通过传入sql脚本和待执行数据库信息，进行多集群并行执行同一个脚本文件
+2、使用说明：
+1）加载python依赖  source /home/mysql/py_venv/fab_venv/bin/activate
+2）按配置文件中格式填写配置文件，仅需3个参数
+3）执行脚本 python run_script_mulit_province.py
+三、这是脚本的配置文件格式。
+IP, 端口，数据库名
+示例：nxr-test.mysql.svc.ly.hpc, 20001, nxr
+	  

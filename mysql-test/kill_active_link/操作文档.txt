@@ -1,0 +1,8 @@
+1、检测数据库中活跃连接，kill对应连接
+2、
+1）加载python依赖  source /home/mysql/py_venv/fab_venv/bin/activate
+2）按配置文件中格式填写配置文件，需4个参数
+3）执行脚本 python kill_mysql_link.py
+三、这是脚本的配置文件格式。
+容器集群名, 端口, kill_user, exec_time
+示例：127.0.0.1, 20001, test, 1

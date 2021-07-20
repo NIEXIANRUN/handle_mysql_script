@@ -1,0 +1,9 @@
+一、自动跳过报错事务，并解析记录报错GTID的binlog日志，脚本在157.50 /home/mysql/nxr/replaction_recovery/repl-recovery.py
+二、操作方法
+1）加载python依赖  source /home/mysql/py_venv/fab_venv/bin/activate
+2）按配置文件中格式填写配置文件，仅需3个参数
+3）执行脚本 python repl-recovery.py
+三、这是脚本的配置文件格式。
+主机类型 ,容器集群名, 端口
+示例：docker, nxr-test.mysql.svc.ly.hpc, 20001
+	  vm, 182.168.157.20, 20001
