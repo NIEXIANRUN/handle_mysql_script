@@ -1,0 +1,1886 @@
+1、数据库开发规范咋制定
+1、建表规约
+2、索引规约
+3、sql规约
+4、sql上下线规约
+5、故障应急规约
+
+规约制定背景：
+降低故障率和维护成本
+适用范围：
+暂时只适用于财富域和消费信贷
+阅读说明：
+规约默认适用于OB、MySQL，特殊情况标明适用OB或适用MySQL
+
+【数据库类型选择规约】
+1. 新业务或未上线的业务统一选择OB，MySQL将不会处理新建库表需求
+
+【建表规约】
+1. 【强制】表必须定义主键，默认为ID，整型自增，如果不采用默认设计必须咨询DBA进行设计评估
+2. 【强制】【适用MySQL】ID字段作为自增主键，禁止在非事务内作为上下文作为条件进行数据传递，禁止非自增非数字类型主键设计出现
+说明：极端情况主备切换，备库有延迟数据丢失情况下，会造成数据错乱
+3. 【强制】【适用OB】建表时统一创建好主键和唯一键
+说明：OB主键不能修改，唯一键需要两次合并(如白天没有触发合并，需两次凌晨每日合并），期间不能写入重复数据，否则会造成建唯一索引失败，需删除重复数据后删除索引重新建立，建议流程为先增加新的唯一索引，新的生效后再删除旧的
+注：查看唯一索引是否生效，idb执行show index from tb; 如果comment字段显示available为已生效状态，index_error为已失败状态
+4. 【强制】多表中的相同列，必须保证列定义一致
+5. 【强制】表达是与否概念的字段，数据类型是unsigned tinyint（1表示是，0表示否），值的内容要统一。
+正例：表达逻辑删除的字段名is_deleted，1表示删除，0表示未删除。
+6. 【强制】表名、字段名必须使用小写字母或数字。禁止出现数字开头，禁止两个下划线中间只出现数字。数据库字段名的修改代价很大，所以字段名称需要慎重考虑。
+7. 【强制】禁用保留字，如desc、range、match、delayed等
+  a. OB1.0的保留字见 
+  b. MySQL关键字列表：http://dev.mysql.com/doc/refman/5.6/en/keywords.html
+8. 【强制】唯一索引名为uk_字段名；普通索引名则为idx_字段名。
+说明：uk_ 即 unique key；idx_ 即index的简称。
+9. 【强制】小数类型为decimal，禁止使用float和double。
+说明：float和double在存储的时候，存在精度损失的问题，很可能在值的比较时，得到不正确的结果。
+10. 【强制】varchar是可变长字符串，不预先分配存储空间，长度不要超过256K，如果存储长度大于此值，目前OB1.0暂不支持。需要考虑字段的拆分方案。一张表的列总长度（rowsize）不能超过512K
+11. 【强制】表必备两字段：gmt_create, gmt_modified。
+说明：gmt_create,gmt_modified的类型均为TIMESTAMP
+12. 【强制】禁止使用datetime字段类型，采用timestamp替换
+说明：为什么要禁用DATETIMEdatetime存在时区问题，在国际场景中已踩过多次坑。主站业务虽不受影响，但为了保持统一的研发规范，决定蚂蚁全站OB数据库禁用DATETIME，改用TIMESTAMP
+13. 【强制】禁止使用外键,触发器,存储过程
+14. 【强制】所有的字符存储与表示，均以utf-8mb4编码
+15. 【推荐】库名与应用名称尽量一致，表的命名最好能够清晰明了的表达表的作用，推荐使用“业务名称_表的作用”的命名方式
+16. 【推荐】如果修改字段含义或对字段表示的状态追加时，需要及时更新字段注释。
+17. 【推荐】字段允许适当冗余，以提高性能，但是必须考虑数据同步的情况。冗余字段应遵循：
+ 1）不是频繁修改的字段 2）不是varchar超长字段
+18. 【强制】【适用OB】单分表行数可能超过10亿行或者单分表容量超过2000GB，才推荐进行分区表。
+说明：如果预计三年后的数据量根本达不到这个级别，请不要在创建表时使用分区表。
+19. 【强制】【适用MySQL】单表一到两年内数据量超过500w或数据容量超过10G考虑分表，且需要提前考虑历史数据迁移或应用自行删除历史数据
+20. 【参考】合适的字符存储长度，不但节约数据库表空间、节约索引存储，更重要的是提升检索速度。
+正例：无符号值可以避免误存负数，且扩大了表示范围
+
+【索引规约】
+1. 【强制】【适用OB】上线SQL前确认新建索引已生效
+说明：OB普通索引生效需要经历一次合并，未生效的索引无法使用，idb可查看索引状态
+2. 【强制】【适用OB】索引修改流程为：先新建索引待新索引生效后，确保旧索引无用再删除
+反例：idb直接修改索引；刚新建了最优索引，重复索引马上变更去删掉
+3. 【强制】索引建立需满足最左前缀原则
+4. 【强制】超过三个表禁止join。需要join的字段，数据类型保持绝对一致；多表关联查询时，保证被关联的字段需要有索引。
+说明：即使双表join也要注意表索引、SQL性能。
+5. 【强制】页面搜索严禁左模糊或者全模糊，如果需要请走搜索引擎来解决。
+说明：索引文件具有B-Tree的最左前缀匹配特性，如果左边的值未确定，那么无法使用此索引。
+6. 【推荐】如果有order by的场景，请注意利用索引的有序性。order by
+最后的字段是组合索引的一部分，并且放在索引组合顺序的最后，避免出现file_sort的情况，影响查询性能。
+正例：where a=? and b=? order by c; 索引：a_b_c
+反例：索引中有范围查找，那么索引有序性无法利用，如：WHERE a>10
+ORDER BY b; 索引a_b无法排序。
+7. 【推荐】利用覆盖索引来进行查询操作，来避免回表操作。
+说明：索引中包含查询条件字段和结果集字段
+8. 【推荐】建组合索引的时候，区分度最高的在最左边。
+正例：如果where a=? and b=?，a列的几乎接近于唯一值，那么只需要单建idx_a索引即可。
+说明：存在非等号和等号混合判断条件时，在建索引时，请把等号条件的列前置。如：where a>? and b=? 那么即使a的区分度更高，也必须把b放在索引的最前列。
+
+索引优化教程
+
+【SQL规约】
+1. 【强制】禁止使用非同类型的列进行等值查询
+说明：如字段类型为varchar，where条件中字段内容为int，存在隐式转换问题，无法走索引近而可能拖垮数据库
+2. 【强制】order by查询语句中，order by的字段必须唯一或者组合唯一（非唯一字段排序，OB与MySQL表现不一致）
+3. 【强制】不要使用count(列名)或count(常量)来替代count(*)，count(*)就是SQL92定义的标准统计行数的语法，跟数据库无关，跟NULL和非NULL无关。
+说明：count(*)会统计值为NULL的行，而count(列名)不会统计此列为NULL值的行。
+4. 【强制】不得使用外键与级联，一切外键概念必须在应用层解决。
+说明：外键与级联更新适用于单机低并发，不适合分布式、高并发集群；级联更新是强阻塞，存在数据库更新风暴的风险；外键影响数据库的插入速度。
+5. 【强制】禁止使用跨库查询
+6. 【强制】禁止使用子查询，改为关联查询
+7. 【强制】禁止核心业务流程SQL包含：计算操作、多表关联、表遍历case when等复杂查询，建议拆分成单表简单查询
+8. 【强制】对于查询条件过滤性差的SQL，SQL绑定执行计划
+说明：MySQL采用force index方式 OB采用hint /*+index(tb tb_ix)*/
+9. 【推荐】优化超多分页场景
+正例1：根据唯一键
+select * from tb where c1 = '' and c2 = '' and id > '' limit 100; 保留每100条的最后一个id为下100条的条件值 （c1、c2、id建联合索引）
+注意：a.适用于数据分布较均匀，如果查询1页100条的数据代价为扫描几万或几十万性能不会到理想预期
+          b.适用不加其他条件只根据id分页捞全表（select * from tb where  id > '' limit 100;）
+9. 【推荐】【适用OB】in操作能避免则避免，若实在无法避免，需要仔细评估in后边的集合元素数量，控制在100个之内，注意in最大个数8192，否则报错size overflow。，
+10. 【推荐】【适用OB】在业务cache表场景中，比如频繁insert/delete，数据生命周期较短的场景，需要添加HINT指定查询
+11. 【参考】删除或更新SQL需优化，核心规则是粒度尽量小（不大于100条）且where条件需索引优化
+  a. 正例1：先分页捞取数据，后根据id =等值条件或in范围条件进行删除或更新
+
+【SQL上下线规约】
+覆盖SQL整个生命周期的稳定性治理
+1. 【SQL上线前-sql review】
+  ○ 【强制】SQL上线前，开发人员需要汇集所有语句提交给DBA进行sql review，确保DBA Review完成后线上发布，SQL未经DBA审核上线引起的故障，开发人员负全责，以下为review流程：
+  a. 开发同学阅读《索引优化教程》，如已清楚优化技巧可跳过该步骤
+  b. 邮件形式发送给DBA sql review内容，每条SQL需包含以下内容
+    ⅰ. SQL内容：SQL语句并简述SQL业务信息
+    ⅱ. SQL峰值大小：QPS TPS）
+    ⅲ. SQL数据分布：说明条件字段区分度（例子：一个userid最多1w条+闭合begintime字段可过滤出100条，其他字段区分度不高）
+    ⅳ. SQL索引信息：SQL可能走的已建索引；计划新建的索引；
+  c. DBA回复review结果
+2. 【SQL运行中-慢SQL治理】
+  ○ 【强制】开发同学定期自助梳理慢SQL联系DBA进行优化
+                                                                       慢SQL标准
+场景  标准
+在线事务处理SQL  qps/tps大于1且rt大于50ms
+在线事务处理SQL  qps/tps大于100且rt大于10ms
+在线或离线分析SQL  qps大于1且rt大于500ms
+在线或离线分析SQL  qps大于10且rt大于100ms
+
+3. 【SQL运行中-SQL执行计划不稳定风险治理】
+  ○ 【强制】开发同学定期梳理执行计划不稳定的风险SQL并改造为SQL中绑定执行计划，执行计划不稳定的SQL特征：
+    ⅰ. 查询条件过滤性差，如SQL where status条件区分度很低（查出几十万数据），且带有order by id条件，如果id索引末尾没带，优化器有可能走主键来优化id排序，但真实耗时扫表比走status索引大很多
+    ⅱ. SQL中值的数据分布变化大，如当前SQL会走user_id索引（user_id一般极限值在几千条），SQL中有个status字段，一般情况status过滤性很差如过滤百万条数据，当status写入一个新值，能过滤出几条数据，那很有可能选择如status开头的索引，但新的索引不适用status值区分度低的SQL
+    ⅲ. 【适用于OB】大量insert、delete操作的表，相关读写SQL需加hint绑定执行计划
+      ● 说明：OB内部机制决定delete只是将记录打删除标记并插入到内存中的buffer表（B树），这样可能会出现表实际记录很少但buffer表很大的情况（每日合并会“清空”buffer表），而当前线上主要的<1.4.73 OB版本，buffer表SQL的执行计划存在走错风险
+4. 【SQL下线-删除相关索引】
+  ○ 【建议】删除相关使用的索引，避免索引越建越多，这个操作风险很大，必须确认删除的索引没有其他SQL使用
+
+
+【故障应急规约】
+● DBA在应急过程中，需要开发同学提供以下信息来协助定位和处理故障，按优先级列举：
+1.提供报错信息
+2.提供报错库的范围和连接信息，格式如下
+【适用OB】OB集群、租户、库名 
+【适用MySQL】域名、端口、库名
+3.提供大盘连接、提供业务影响触发故障等级信息
+4.授权DBA操作：
+      a. 限流慢SQL，例子：DBA会贴出问题SQL让业务评估是否可以限流
+      b.【适用MySQL】域名切换并杀连接
+
+【链接】
+OceanBase简介
+2、raid0-5，数据库一般用的是哪种级别
+RAID就是一种由多块廉价磁盘构成的冗余阵列，在操作系统下是作为一个独立的大型存储设备出现。RAID可以充分发 挥出多块硬盘的优势，可以提升硬盘速度，增大容量，提供容错功能够确保数据安全性，易于管理的优点，在任何一块硬盘出现问题的情况下都可以继续工作，不会 受到损坏硬盘的影响。
+RAID 0即Data Stripping（数据分条技术）。整个逻辑盘的数据是被分条（stripped）分布在多个物理磁盘上，可以并行读/写，提供最快的速度，但没有冗余能力。要求至少两个磁盘。我们通过RAID 0可以获得更大的单个逻辑盘的容量，且通过对多个磁盘的同时读取获得更高的存取速度。RAID 0首先考虑的是磁盘的速度和容量，忽略了安全，只要其中一个磁盘出了问题，那么整个阵列的数据都会不保了。
+RAID 1，又称镜像方式，也就是数据的冗余。在整个镜像过程中，只有一半的磁盘容量是有效的（另一半磁盘容量用来存放同样的数据）。同RAID 0相比，RAID 1首先考虑的是安全性，容量减半、速度不变。
+RAID 5的工作方式是将各个磁盘生成的数据校验切成块，分别存放到组成阵列的各个磁盘中去，这样就缓解了校验数据存放时所产生的瓶颈问题，但是分割数据及控制存放都要付出速度上的代价。
+
+raid10 由多个磁盘组成的RAID 0阵列再进行镜像。
+
+3、如果执行计划中extra 中有filesort和temportry，代表是哪种情况？
+1、filesort：对于不能利用索引避免排序的SQL，数据库不得不自己实现排序功能以满足用户需求，此时SQL的执行计划中会出现“Using filesort”，这里需要注意的是filesort并不意味着就是文件排序，其实也有可能是内存排序，这个主要由sort_buffer_size参数与结果集大小确定。MySQL内部实现排序主要有3种方式：常规排序、优化排序和优先队列排序，主要涉及3种排序算法：快速排序、归并排序和堆排序。
+对于不能利用索引避免排序的SQL，数据库不得不自己实现排序功能以满足用户需求，此时SQL的执行计划中会出现“Using filesort”，这里需要注意的是filesort并不意味着就是文件排序，其实也有可能是内存排序，这个主要由sort_buffer_size参数与结果集大小确定。MySQL内部实现排序主要有3种方式：常规排序、优化排序和优先队列排序，主要涉及3种排序算法：快速排序、归并排序和堆排序。
+注意：排序不一致问题
+2、temportry：temporary：MySQL需要创建一个临时表来存储结果 比如子查询
+在DB端执行去重，join以及子查询等操作的时候，mysql会自动创建临时表
+DB自动创建临时表的情况有如下几种
+① Evaluation of UNION statements.
+② Evaluation of some views, such those that use the TEMPTABLE algorithm, UNION, or aggregation.
+③ Evaluation of derived tables (subqueries in the FROM clause).（这个是本节关注的重点）
+④ Tables created for subquery or semi-join materialization (see Section 8.2.1.18, “Subquery Optimization”).
+⑤ Evaluation of statements that contain an ORDER BY clause and a different GROUP BY clause, or for which the ORDER BY or GROUP BY contains columns from tables other than the first table in the join queue.
+⑥ Evaluation of DISTINCT combined with ORDER BY may require a temporary table.
+⑦ For queries that use the SQL_SMALL_RESULT option, MySQL uses an in-memory temporary table, unless the query also contains elements (described later) that require on-disk storage.
+⑧ Evaluation of multiple-table UPDATE statements.
+⑨ Evaluation of GROUP_CONCAT() or COUNT(DISTINCT) expressions.
+
+4、inode主要是干啥都，如果日志文件比较多，咋清理，如何监控
+答：df -i监控
+为了方便管理，Linux 文件系统为每个文件都分配两个数据结构，索引节点（index node）和目录项（directory entry）。它们主要用来记录文件的元信息和目录结构。
+索引节点，简称为 inode，用来记录文件的元数据，比如 inode 编号、文件大小、访问权限、修改日期、数据的位置等。索引节点和文件一一对应，它跟文件内容一样，都会被持久化存储到磁盘中。所以记住，索引节点同样占用磁盘空间。
+目录项，简称为 dentry，用来记录文件的名字、索引节点指针以及与其他目录项的关联关系。多个关联的目录项，就构成了文件系统的目录结构。不过，不同于索引节点，目录项是由内核维护的一个内存数据结构，所以通常也被叫做目录项缓存。
+换句话说，索引节点是每个文件的唯一标志，而目录项维护的正是文件系统的树状结构。
+目录项和索引节点的关系是多对一，你可以简单理解为，一个文件可以有多个别名。
+
+5、硬链接和软链接有啥区别
+硬连接：通过硬链接为文件创建的别名，就会对应不同的目录项，不过这些目录项本质上还是链接同一个文件，所以，它们的索引节点相同
+硬连接的作用是允许一个文件拥有多个有效路径名，这样用户就可以建立硬连接到重要文件，以防止“误删”的功能。
+其原因如上所述，因为对应该目录的索引节点有一个以上的连接。只删除一个连接并不影响索引节点本身和其它的连接，只有当最后一个连接被删除后，文件的数据块及目录的连接才会被释放。
+也就是说，文件真正删除的条件是与之相关的所有硬连接文件均被删除。
+
+软连接：在符号连接中，文件实际上是一个文本文件，其中包含的有另一文件的位置信息。
+比如：A 是 B 的软链接（A 和 B 都是文件名），A 的目录项中的 inode 节点号与 B 的目录项中的 inode 节点号不相同，A 和 B 指向的是两个不同的 inode，继而指向两块不同的数据块。
+但是 A 的数据块中存放的只是 B 的路径名（可以根据这个找到 B 的目录项）。A 和 B 之间是“主从”关系，如果 B 被删除了，A 仍然存在（因为两个是不同的文件），但指向的是一个无效的链接。
+
+lsof(list open files)是一个列出当前系统打开文件的工具。
+lsof -c abc：显示abc进程现在打开的文件
+https://www.runoob.com/w3cnote/linux-check-port-usage.html
+6、平时关注的监控指标有哪些？
+1、基础层主机层面
+cpu、内存、网卡、网络流量、硬盘余量、连接数、硬盘IO
+2、DB
+非功能指标：
+
+● QPS：数据库每秒钟处理的请求数量，包括DML，DDL这样才能体现数据库的性能
+● TPS：数据库每秒处理的事务数量
+● 并发数：数据库当前的并行处理的会话数量
+● 连接数：连接到数据库会话的数量
+● 缓存命中率：InnoDB的缓存命中率
+
+功能指标：
+
+● 可用性：数据库是否正常对外提供服务
+● 阻塞：当前是否有阻塞的会话，锁住了别人需要的资源
+● 死锁：当前事务是否产生了死锁，相互锁住了对方的资源
+● 慢查询：实时慢查询监控
+● 主从延迟：在异步复制架构中需要
+7、负载load高排查  cpu（user，sys） 内存 
+简单来说，平均负载是指单位时间内，系统处于可运行状态和不可中断状态的平均进程数，也就是平均活跃进程数，它和 CPU 使用率并没有直接关系。
+这里我先解释下，可运行状态和不可中断状态这俩词儿。
+
+而 CPU 使用率，是单位时间内 CPU 繁忙情况的统计，跟平均负载并不一定完全对应。
+比如：CPU 密集型进程，使用大量 CPU 会导致平均负载升高，此时这两者是一致的；
+I/O 密集型进程，等待 I/O 也会导致平均负载升高，但 CPU 使用率不一定很高；
+大量等待 CPU 的进程调度也会导致平均负载升高，此时的 CPU 使用率也会比较高。
+8、主从延时有哪些场景？
+1.主库DML语句并发大,从库qps高
+2.从库服务器配置差或者一台服务器上几台从库(资源竞争激烈,特别是io)
+3.主库和从库的参数配置不一样
+4.大事务(DDL,我觉得DDL也相当于一个大事务)
+5.从库上在进行备份操作
+6.表上无主键的情况(主库利用索引更改数据,备库回放只能用全表扫描,这种情况可以调整slave_rows_search_algorithms参数适当优化下)
+7.设置的是延迟备库
+8.备库空间不足的情况下
+9、删除了一个文件，但是磁盘空间没有释放
+du -s /tmp/*|sort -nr|head -3
+1、文件还有硬连接
+2、还有进程在往文件里面写文件
+一般说来不会出现删除文件后空间不释放的情况，但是也存在例外，比如文件被进程锁定，或者有进程一直在向这个文件写数据等等，要理解这个问题，就需要知道Linux下文件的存储机制和存储结构。
+一个文件在文件系统中的存放分为两个部分：数据部分和指针部分，指针位于文件系统的meta-data中，数据被删除后，这个指针就从meta-data中清除了，而数据部分存储在磁盘中，数据对应的指针从meta-data中清除后，文件数据部分占用的空间就可以被覆盖并写入新的内容，之所以出现删除access_log文件后，空间还没释放，
+就是因为httpd进程还在一直向这个文件写入内容，导致虽然删除了access_log文件，但文件对应的指针部分由于进程锁定，并未从meta-data中清除，而由于指针并未被删除，那么系统内核就认为文件并未被删除，因此通过df命令查询空间并未释放也就不足为奇了。
+排查问题：lsof｜grep delete
+解决问题：在线清空这个文件 echo " " >/tmp/acess.log
+10、xtrbackup 备份数据原理和流程，以及xtrbackup 备份的锁问题
+1、备份原理和流程：
+备份开始时首先会开启一个后台检测进程，实时检测mysq redo的变化，一旦发现有新的日志写入，立刻将日志记入后台日志文件xtrabackup_log中，之后复制innodb的数据文件一系统表空间文件ibdatax，
+复制结束后，将执行flush tables with readlock,然后复制.frm MYI MYD等文件，最后执行unlock tables,最终停止xtrabackup_log
+
+2、flush tables with readlock 锁问题
+Closes all open tables and locks all tables for all databases with a global read lock.
+Percona已经意识到了这个问题的严重性，提供了两种解决问题的思路，一是设置超时时间，二是kill其他阻塞线程。在2.1.4的Release Notes中
+但是如果一旦因为表无法关闭或者因为其他的锁导致无法正常获取到表锁使得Flush table with read lock阻塞，这个后果将是灾难性的，所有的读，无论是快照读，还是S锁或者X锁的读，均会被阻塞，因为Flush table with read lock需要关闭表
+3、什么场景下备份进程会被卡住
+1. Flush tables with read lock会上一个实例级别的全局锁，该锁与Lock tables互斥。如果一个会话中使用LOCK TABLES语句对某表加了表锁，在该表锁未释放前，那么另外一个会话如果执行FLUSH TABLES和FLUSH TABLES WITH READ LOCK语句会被阻塞，而如果数据库中lock_wait_timeout参数设置时间太短，innobackupex将会因为执行FLUSH TABLES WITH READ LOCK语句获取全局读锁超时而导致备份失败退出。
+2. 如果一个会话正在执行DDL语句，那么另外一个会话如果执行FLUSH TABLES和FLUSH TABLES WITH READ LOCK语句会被阻塞，而如果数据库中lock_wait_timeout参数设置时间太短，innobackupex将会因为执行FLUSH TABLES WITH READ LOCK语句获取全局读锁超时而导致备份失败退出。
+3. 如果一个会话正在执行DML大事务(DML语句正在执行，数据正在发生修改，而不是使用lock in share mode和for update语句来显式加锁)，那么另外一个会话如果执行FLUSH TABLES和FLUSH TABLES WITH READ LOCK语句会被阻塞，而如果数据库中lock_wait_timeout参数设置时间太短，innobackupex将会因为执行FLUSH TABLES WITH READ LOCK语句获取全局读锁超时而导致备份失败退出。
+4. 如果一个会话出现一个慢查询，也会造成另外一个会话如果执行FLUSH TABLES和FLUSH TABLES WITH READ LOCK语句会被阻塞。
+
+https://www.percona.com/blog/2013/10/11/handling-long-running-queries-in-mysql-with-percona-xtrabackup/
+
+11、执行计划看的是哪几列
+答：type，key，rows，filtered，extra。
+
+
+Explain 介绍
+1. id
+2. select_type
+3. table
+4. type
+5. possible_keys
+6. key
+7. key_len
+8. ref
+9. rows
+10. Extra
+
+Explain extended 选项介绍
+
+环境准备
+
+1. MySQL版本
+mysql> select version();
++------------------+
+| version()        |
++------------------+
+| 5.6.16.7 |
++------------------+
+
+2. 测试表
+| people | CREATE TABLE `people` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `zipcode` char(32) NOT NULL DEFAULT '',
+  `address` varchar(128) NOT NULL DEFAULT '',
+  `lastname` char(64) NOT NULL DEFAULT '',
+  `firstname` char(64) NOT NULL DEFAULT '',
+  `birthdate` char(10) NOT NULL DEFAULT '',
+  PRIMARY KEY (`id`),
+  KEY `zipcode` (`zipcode`,`firstname`,`lastname`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8 |
+| people_car | CREATE TABLE `people_car` (
+  `people_id` bigint(20) DEFAULT NULL,
+  `plate_number` varchar(16) NOT NULL DEFAULT '',
+  `engine_number` varchar(16) NOT NULL DEFAULT '',
+  `lasttime` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 |
+
+3. 测试数据
+mysql> insert into people
+    -> (zipcode,address,lastname,firstname,birthdate)
+    -> values
+    -> ('230031','anhui','zhan','jindong','1989-09-15'),
+    -> ('100000','beijing','zhang','san','1987-03-11'),
+    -> ('200000','shanghai','wang','wu','1988-08-25');
+Query OK, 3 rows affected (0.00 sec)
+Records: 3  Duplicates: 0  Warnings: 0
+mysql> insert into people_car
+    -> (people_id,plate_number,engine_number,lasttime)
+    -> values
+    -> (1,'A121311','12121313','2013-11-23 :21:12:21'),
+    -> (2,'B121311','1S121313','2011-11-23 :21:12:21'),
+    -> (3,'C121311','1211SAS1','2012-11-23 :21:12:21');
+Query OK, 3 rows affected (0.00 sec)
+Records: 3  Duplicates: 0  Warnings: 0
+
+EXPLAIN 介绍
+先从一个最简单的查询开始：
+Query-1:
+mysql> explain select zipcode,firstname,lastname from people;
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | people | index | NULL          | zipcode | 480     | NULL |    3 | Using index |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+EXPLAIN输出结果共有id,select_type,table,type,possible_keys,key,key_len,ref,rows和Extra几列。
+
+id
+Query-2:
+explain select zipcode from (select * from people a) b;
++----+-------------+------------+------+---------------+------+---------+------+------+-------+
+| id | select_type | table      | type | possible_keys | key  | key_len | ref  | rows | Extra |
++----+-------------+------------+------+---------------+------+---------+------+------+-------+
+|  1 | PRIMARY     | <derived2> | ALL  | NULL          | NULL | NULL    | NULL |    3 | NULL  |
+|  2 | DERIVED     | a          | ALL  | NULL          | NULL | NULL    | NULL |    3 | NULL  |
++----+-------------+------------+------+---------------+------+---------+------+------+-------+
+2 rows in set (0.00 sec)
+id是用来顺序标识整个查询中SELELCT 语句的，通过上面这个简单的嵌套查询可以看到id越大的语句越先执行。该值可能为NULL，如果这一行用来说明的是其他行的联合结果，比如UNION语句：
+Query-3:
+explain select * from people where zipcode = 100000 union select * from people where zipcode = 200000;
++----+--------------+------------+------+---------------+------+---------+------+------+-----------------+
+| id | select_type  | table      | type | possible_keys | key  | key_len | ref  | rows | Extra           |
++----+--------------+------------+------+---------------+------+---------+------+------+-----------------+
+|  1 | PRIMARY      | people     | ALL  | zipcode       | NULL | NULL    | NULL |    3 | Using where     |
+|  2 | UNION        | people     | ALL  | zipcode       | NULL | NULL    | NULL |    3 | Using where     |
+| NULL | UNION RESULT | <union1,2> | ALL  | NULL          | NULL | NULL    | NULL | NULL | Using temporary |
++----+--------------+------------+------+---------------+------+---------+------+------+-----------------+
+3 rows in set (0.00 sec)
+select_type
+SELECT语句的类型，可以有下面几种。
+● SIMPLE
+最简单的SELECT查询，没有使用UNION或子查询。见Query-1。
+● PRIMARY
+在嵌套的查询中是最外层的SELECT语句，在UNION查询中是最前面的SELECT语句。见Query-2和Query-3。
+● UNION
+UNION中第二个以及后面的SELECT语句。 见Query-3。
+● DERIVED
+派生表SELECT语句中FROM子句中的SELECT语句。见Query-2。
+● UNION RESULT
+一个UNION查询的结果。见Query-3。
+● DEPENDENT UNION
+顾名思义，首先需要满足UNION的条件，及UNION中第二个以及后面的SELECT语句，同时该语句依赖外部的查询。
+Query-4:
+explain select * from people where id in (select id from people where zipcode = 100000 union select id from people where zipcode = 200000 );
++----+--------------------+------------+--------+-----------------+---------+---------+------+------+-----------------+
+| id | select_type        | table      | type   | possible_keys   | key     | key_len | ref  | rows | Extra           |
++----+--------------------+------------+--------+-----------------+---------+---------+------+------+-----------------+
+|  1 | PRIMARY            | people     | ALL    | NULL            | NULL    | NULL    | NULL |    3 | Using where     |
+|  2 | DEPENDENT SUBQUERY | people     | eq_ref | PRIMARY,zipcode | PRIMARY | 8       | func |    1 | Using where     |
+|  3 | DEPENDENT UNION    | people     | eq_ref | PRIMARY,zipcode | PRIMARY | 8       | func |    1 | Using where     |
+| NULL | UNION RESULT       | <union2,3> | ALL    | NULL            | NULL    | NULL    | NULL | NULL | Using temporary |
++----+--------------------+------------+--------+-----------------+---------+---------+------+------+-----------------+
+4 rows in set (0.00 sec)
+Query-4中select id from people where zipcode = 200000的select_type为DEPENDENT UNION。你也许很奇怪这条语句并没有依赖外部的查询啊。
+这里顺带说下MySQL优化器对IN操作符的优化，优化器会将IN中的uncorrelated subquery优化成一个correlated subquery（关于correlated subquery参见这里）。
+SELECT ... FROM t1 WHERE t1.a IN (SELECT b FROM t2);
+类似这样的不相关子查询语句会被重写成这样：
+SELECT ... FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.a);
+Query-5:
+explain select * from people o where exists (select id from people where zipcode = 100000 and id = o.id union select id from people where zipcode = 200000 and id = o.id);
++----+--------------------+------------+--------+-----------------+---------+---------+-----------+------+-----------------+
+| id | select_type        | table      | type   | possible_keys   | key     | key_len | ref       | rows | Extra           |
++----+--------------------+------------+--------+-----------------+---------+---------+-----------+------+-----------------+
+|  1 | PRIMARY            | o          | ALL    | NULL            | NULL    | NULL    | NULL      |    3 | Using where     |
+|  2 | DEPENDENT SUBQUERY | people     | eq_ref | PRIMARY,zipcode | PRIMARY | 8       | test.o.id |    1 | Using where     |
+|  3 | DEPENDENT UNION    | people     | eq_ref | PRIMARY,zipcode | PRIMARY | 8       | test.o.id |    1 | Using where     |
+| NULL | UNION RESULT       | <union2,3> | ALL    | NULL            | NULL    | NULL    | NULL      | NULL | Using temporary |
++----+--------------------+------------+--------+-----------------+---------+---------+-----------+------+-----------------+
+4 rows in set (0.00 sec)
+题外话：有时候MySQL优化器这种太过“聪明” 的做法会导致WHERE条件包含IN()的子查询语句性能有很大损失。可以参看《高性能MySQL第三版》6.5.1关联子查询一节。
+● SUBQUERY
+子查询中第一个SELECT语句。
+Query-6:
+explain select * from people where id = (select id from people where zipcode = 100000);
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref   | rows | Extra                    |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+|  1 | PRIMARY     | people | const | PRIMARY       | PRIMARY | 8       | const |    1 | NULL                     |
+|  2 | SUBQUERY    | people | index | zipcode       | zipcode | 480     | NULL  |    3 | Using where; Using index |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+2 rows in set (0.00 sec)
+● DEPENDENT SUBQUERY
+和DEPENDENT UNION相对UNION一样。见Query-5。
+除了上述几种常见的select_type之外还有一些其他的这里就不一一介绍了，不同MySQL版本也不尽相同。
+
+table
+显示的这一行信息是关于哪一张表的。有时候并不是真正的表名。
+Query-7:
+explain select * from (select * from (select * from people a) b ) c;
++----+-------------+------------+------+---------------+------+---------+------+------+-------+
+| id | select_type | table      | type | possible_keys | key  | key_len | ref  | rows | Extra |
++----+-------------+------------+------+---------------+------+---------+------+------+-------+
+|  1 | PRIMARY     | <derived2> | ALL  | NULL          | NULL | NULL    | NULL |    3 | NULL  |
+|  2 | DERIVED     | <derived3> | ALL  | NULL          | NULL | NULL    | NULL |    3 | NULL  |
+|  3 | DERIVED     | a          | ALL  | NULL          | NULL | NULL    | NULL |    3 | NULL  |
++----+-------------+------------+------+---------------+------+---------+------+------+-------+
+3 rows in set (0.00 sec)
+可以看到如果指定了别名就显示的别名。
+N就是id值，指该id值对应的那一步操作的结果。
+还有这种类型，出现在UNION语句中，见Query-4。
+注意：MySQL对待这些表和普通表一样，但是这些“临时表”是没有任何索引的。
+
+type
+type列很重要，是用来说明表与表之间是如何进行关联操作的，有没有使用索引。MySQL中“关联”一词比一般意义上的要宽泛，MySQL认为任何一次查询都是一次“关联”，并不仅仅是一个查询需要两张表才叫关联，所以也可以理解MySQL是如何访问表的。主要有下面几种类别。
+● const
+当确定最多只会有一行匹配的时候，MySQL优化器会在查询前读取它而且只读取一次，因此非常快。const只会用在将常量和主键或唯一索引进行比较时，而且是比较所有的索引字段。people表在id上有一个主键索引，在(zipcode,firstname,lastname)有一个二级索引。因此Query-8的type是const而Query-9并不是：
+Query-8:
+explain select * from people where id=1;
++----+-------------+--------+-------+---------------+---------+---------+-------+------+-----------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref   | rows | Extra           |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+-----------------+
+|  1 | SIMPLE      | people | const | PRIMARY       | PRIMARY | 8       | const |    1 | Using pk access |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+-----------------+
+1 row in set (0.00 sec)
+Query-9:
+explain select * from people where zipcode = 100000;
++----+-------------+--------+------+---------------+------+---------+------+------+-------------+
+| id | select_type | table  | type | possible_keys | key  | key_len | ref  | rows | Extra       |
++----+-------------+--------+------+---------------+------+---------+------+------+-------------+
+|  1 | SIMPLE      | people | ALL  | zipcode       | NULL | NULL    | NULL |    3 | Using where |
++----+-------------+--------+------+---------------+------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+注意下面的Query-10也不能使用const table，虽然也是主键，也只会返回一条结果。
+Query-10:
+explain select * from people where id >2;
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | people | range | PRIMARY       | PRIMARY | 8       | NULL |    1 | Using where |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+● system
+这是const连接类型的一种特例，表仅有一行满足条件。
+Query-11:
+explain select * from (select * from people where id = 1 )b;
++----+-------------+------------+--------+---------------+---------+---------+-------+------+-------+
+| id | select_type | table      | type   | possible_keys | key     | key_len | ref   | rows | Extra |
++----+-------------+------------+--------+---------------+---------+---------+-------+------+-------+
+|  1 | PRIMARY     | <derived2> | system | NULL          | NULL    | NULL    | NULL  |    1 | NULL  |
+|  2 | DERIVED     | people     | const  | PRIMARY       | PRIMARY | 8       | const |    1 | NULL  |
++----+-------------+------------+--------+---------------+---------+---------+-------+------+-------+
+2 rows in set (0.00 sec)
+已经是一个const table并且只有一条记录。
+● eq_ref
+eq_ref类型是除了const外最好的连接类型，它用在一个索引的所有部分被联接使用并且索引是UNIQUE或PRIMARY KEY。
+需要注意InnoDB和MyISAM引擎在这一点上有点差别。InnoDB当数据量比较小的情况type会是All。我们上面创建的people 和 people_car默认都是InnoDB表。
+Query-12:
+explain select * from people a,people_car b where a.id = b.people_id;
++----+-------------+-------+------+---------------+------+---------+------+------+----------------------------------------------------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref  | rows | Extra                                              |
++----+-------------+-------+------+---------------+------+---------+------+------+----------------------------------------------------+
+|  1 | SIMPLE      | b     | ALL  | NULL          | NULL | NULL    | NULL |    3 | NULL                                               |
+|  1 | SIMPLE      | a     | ALL  | PRIMARY       | NULL | NULL    | NULL |    3 | Using where; Using join buffer (Block Nested Loop) |
++----+-------------+-------+------+---------------+------+---------+------+------+----------------------------------------------------+
+2 rows in set (0.00 sec)
+我们创建两个MyISAM表people2和people_car2试试：
+CREATE TABLE people2(
+    id bigint auto_increment primary key,
+    zipcode char(32) not null default '',
+    address varchar(128) not null default '',
+    lastname char(64) not null default '',
+    firstname char(64) not null default '',
+    birthdate char(10) not null default ''
+)ENGINE = MyISAM;
+CREATE TABLE people_car2(
+    people_id bigint,
+    plate_number varchar(16) not null default '',
+    engine_number varchar(16) not null default '',
+    lasttime timestamp
+)ENGINE = MyISAM;
+Query-13:
+explain select * from people2 a,people_car2 b where a.id = b.people_id;
++----+-------------+-------+--------+---------------+---------+---------+------------------+------+-------------+
+| id | select_type | table | type   | possible_keys | key     | key_len | ref              | rows | Extra       |
++----+-------------+-------+--------+---------------+---------+---------+------------------+------+-------------+
+|  1 | SIMPLE      | b     | ALL    | NULL          | NULL    | NULL    | NULL             |    3 | Using where |
+|  1 | SIMPLE      | a     | eq_ref | PRIMARY       | PRIMARY | 8       | test.b.people_id |    1 | NULL        |
++----+-------------+-------+--------+---------------+---------+---------+------------------+------+-------------+
+2 rows in set (0.00 sec)
+我想这是InnoDB对性能权衡的一个结果。
+eq_ref可以用于使用 = 操作符比较的带索引的列。比较值可以为常量或一个使用在该表前面所读取的表的列的表达式。如果关联所用的索引刚好又是主键，那么就会变成更优的const了(测试发现MyISAM和INNODB结果一样)：
+Query-14:
+explain select * from people2 a,people_car2 b where a.id = b.people_id and b.people_id = 1;
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------------+
+| id | select_type | table | type  | possible_keys | key     | key_len | ref   | rows | Extra       |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------------+
+|  1 | SIMPLE      | a     | const | PRIMARY       | PRIMARY | 8       | const |    1 | NULL        |
+|  1 | SIMPLE      | b     | ALL   | NULL          | NULL    | NULL    | NULL  |    3 | Using where |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------------+
+2 rows in set (0.00 sec)
+● ref
+这个类型跟eq_ref不同的是，它用在关联操作只使用了索引的最左前缀，或者索引不是UNIQUE和PRIMARY KEY。ref可以用于使用=或<=>（不等于）操作符的带索引的列。
+为了说明我们重新建立上面的people2和people_car2表，仍然使用MyISAM但是不给id指定primary key。然后我们分别给id和people_id建立非唯一索引。
+create index people_id on people2(id);
+create index people_id on people_car2(people_id);
+然后再执行下面的查询：
+Query-15:
+explain select * from peoplex a,people_carx b where a.id = b.people_id and a.id > 2;
+MyASIM:
++----+-------------+-------+--------+-------------------+-----------+---------+------------------+------+-----------------------+
+| id | select_type | table | type   | possible_keys     | key       | key_len | ref              | rows | Extra                 |
++----+-------------+-------+--------+-------------------+-----------+---------+------------------+------+-----------------------+
+|  1 | SIMPLE      | b     | range  | people_id         | people_id | 9       | NULL             |    2 | Using index condition |
+|  1 | SIMPLE      | a     | eq_ref | PRIMARY,people_id | PRIMARY   | 8       | test.b.people_id |    1 | NULL                  |
++----+-------------+-------+--------+-------------------+-----------+---------+------------------+------+-----------------------+
+2 rows in set (0.00 sec)
+InnoDB:
++----+-------------+-------+-------+---------------+---------+---------+------+------+----------------------------------------------------+
+| id | select_type | table | type  | possible_keys | key     | key_len | ref  | rows | Extra                                              |
++----+-------------+-------+-------+---------------+---------+---------+------+------+----------------------------------------------------+
+|  1 | SIMPLE      | a     | range | PRIMARY       | PRIMARY | 8       | NULL |    1 | Using where                                        |
+|  1 | SIMPLE      | b     | ALL   | NULL          | NULL    | NULL    | NULL |    3 | Using where; Using join buffer (Block Nested Loop) |
++----+-------------+-------+-------+---------------+---------+---------+------+------+----------------------------------------------------+
+2 rows in set (0.00 sec)
+Query-16:
+explain select * from peoplex a,people_carx b where a.id = b.people_id and a.id = 2;
+MyASIM:
++----+-------------+-------+-------+-------------------+-----------+---------+-------+------+-------+
+| id | select_type | table | type  | possible_keys     | key       | key_len | ref   | rows | Extra |
++----+-------------+-------+-------+-------------------+-----------+---------+-------+------+-------+
+|  1 | SIMPLE      | a     | const | PRIMARY,people_id | PRIMARY   | 8       | const |    1 | NULL  |
+|  1 | SIMPLE      | b     | ref   | people_id         | people_id | 9       | const |    1 | NULL  |
++----+-------------+-------+-------+-------------------+-----------+---------+-------+------+-------+
+2 rows in set (0.00 sec)
+InnoDB:
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------------+
+| id | select_type | table | type  | possible_keys | key     | key_len | ref   | rows | Extra       |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------------+
+|  1 | SIMPLE      | a     | const | PRIMARY       | PRIMARY | 8       | const |    1 | NULL        |
+|  1 | SIMPLE      | b     | ALL   | NULL          | NULL    | NULL    | NULL  |    3 | Using where |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-------------+
+2 rows in set (0.00 sec)
+Query-17:
+explain select * from peoplex a,people_carx b where a.id = b.people_id;
+MyISAM:
++----+-------------+-------+--------+-------------------+---------+---------+------------------+------+-------------+
+| id | select_type | table | type   | possible_keys     | key     | key_len | ref              | rows | Extra       |
++----+-------------+-------+--------+-------------------+---------+---------+------------------+------+-------------+
+|  1 | SIMPLE      | b     | ALL    | people_id         | NULL    | NULL    | NULL             |    3 | Using where |
+|  1 | SIMPLE      | a     | eq_ref | PRIMARY,people_id | PRIMARY | 8       | test.b.people_id |    1 | NULL        |
++----+-------------+-------+--------+-------------------+---------+---------+------------------+------+-------------+
+2 rows in set (0.00 sec)
+InnoDB:
++----+-------------+-------+------+---------------+------+---------+------+------+----------------------------------------------------+
+| id | select_type | table | type | possible_keys | key  | key_len | ref  | rows | Extra                                              |
++----+-------------+-------+------+---------------+------+---------+------+------+----------------------------------------------------+
+|  1 | SIMPLE      | b     | ALL  | NULL          | NULL | NULL    | NULL |    3 | NULL                                               |
+|  1 | SIMPLE      | a     | ALL  | PRIMARY       | NULL | NULL    | NULL |    3 | Using where; Using join buffer (Block Nested Loop) |
++----+-------------+-------+------+---------------+------+---------+------+------+----------------------------------------------------+
+2 rows in set (0.00 sec)
+Query-18:
+explain select * from peoplex where id = 1;
+MyASIM:
++----+-------------+---------+-------+-------------------+---------+---------+-------+------+-----------------+
+| id | select_type | table   | type  | possible_keys     | key     | key_len | ref   | rows | Extra           |
++----+-------------+---------+-------+-------------------+---------+---------+-------+------+-----------------+
+|  1 | SIMPLE      | people2 | const | PRIMARY,people_id | PRIMARY | 8       | const |    1 | Using pk access |
++----+-------------+---------+-------+-------------------+---------+---------+-------+------+-----------------+
+1 row in set (0.00 sec)
+InnoDB:
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-----------------+
+| id | select_type | table | type  | possible_keys | key     | key_len | ref   | rows | Extra           |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-----------------+
+|  1 | SIMPLE      | a     | const | PRIMARY       | PRIMARY | 8       | const |    1 | Using pk access |
++----+-------------+-------+-------+---------------+---------+---------+-------+------+-----------------+
+1 row in set (0.00 sec)
+看上面的Query-15，Query-16和Query-17，Query-18我们发现MyISAM/InnoDB在ref类型上的处理也是有不同策略的。
+● fulltext
+链接是使用全文索引进行的。一般我们用到的索引都是B树，这里就不举例说明了。
+● ref_or_null
+该类型和ref类似。但是MySQL会做一个额外的搜索包含NULL列的操作。在解决子查询中经常使用该联接类型的优化。（详见这里)。
+Query-19:
+mysql> explain select * from people where id = 2 or id is null;
++----+-------------+--------+-------+---------------+---------+---------+-------+------+-------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref   | rows | Extra |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+-------+
+|  1 | SIMPLE      | people | const | PRIMARY       | PRIMARY | 8       | const |    1 | NULL  |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+-------+
+1 row in set (0.00 sec)
+Query-20:
+mysql> explain select * from people where id = 2 or id is not null;
++----+-------------+--------+------+---------------+------+---------+------+------+-------------+
+| id | select_type | table  | type | possible_keys | key  | key_len | ref  | rows | Extra       |
++----+-------------+--------+------+---------------+------+---------+------+------+-------------+
+|  1 | SIMPLE      | people | ALL  | PRIMARY       | NULL | NULL    | NULL |    3 | Using where |
++----+-------------+--------+------+---------------+------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+注意Query-19/20使用的并不是ref_or_null，而且InnnoDB和MyISAM表现大致相同（数据量大的情况下有待验证）。
+● index_merger
+该联接类型表示使用了索引合并优化方法。在这种情况下，key列包含了使用的索引的清单，key_len包含了使用的索引的最长的关键元素。关于索引合并优化看这里。
+● unique_subquery
+该类型替换了下面形式的IN子查询的ref：
+value IN (SELECT primary_key FROM single_table WHERE some_expr)
+unique_subquery是一个索引查找函数，可以完全替换子查询，效率更高。
+● index_subquery
+该联接类型类似于unique_subquery。可以替换IN子查询，但只适合下列形式的子查询中的非唯一索引：
+value IN (SELECT key_column FROM single_table WHERE some_expr)
+● range 只检索给定范围的行，使用一个索引来选择行。key列显示使用了哪个索引。key_len包含所使用索引的最长关键元素。在该类型中ref列为NULL。当使用=、<>、>、>=、<、<=、IS NULL、<=>、BETWEEN或者IN操作符，用常量比较关键字列时，可以使用range:
+Query-21:
+explain select * from people where id = 1 or id = 2;
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | people | range | PRIMARY       | PRIMARY | 8       | NULL |    2 | Using where |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+注意在我的测试中：发现只有id是主键或唯一索引时type才会为range。
+explain select * from people where id >1;
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | people | range | PRIMARY       | PRIMARY | 8       | NULL |    2 | Using where |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+explain select * from people where id in (1,2);
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref  | rows | Extra       |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+|  1 | SIMPLE      | people | range | PRIMARY       | PRIMARY | 8       | NULL |    2 | Using where |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------------+
+1 row in set (0.00 sec)
+这里顺便挑剔下MySQL使用相同的range来表示范围查询和列表查询。
+我们不是挑剔：这两种访问效率是不同的。对于范围条件查询，MySQL无法使用范围列后面的其他索引列了，但是对于“多个等值条件查询”则没有这个限制了。 ——出自《高性能MySQL第三版》
+● index
+该联接类型与ALL相同，除了只有索引树被扫描。这通常比ALL快，因为索引文件通常比数据文件小。这个类型通常的作用是告诉我们查询是否使用索引进行排序操作。
+Query-22:
+explain select * from people order by id;
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref  | rows | Extra |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------+
+|  1 | SIMPLE      | people | index | NULL          | PRIMARY | 8       | NULL |    3 | NULL  |
++----+-------------+--------+-------+---------------+---------+---------+------+------+-------+
+1 row in set (0.00 sec)
+● ALL
+最慢的一种方式，即全表扫描。
+总的来说：上面几种连接类型的性能是依次递减的（system>const），不同的MySQL版本、不同的存储引擎甚至不同的数据量表现都可能不一样。
+
+possible_keys
+possible_keys列指出MySQL能使用哪个索引在该表中找到行。
+
+key
+key列显示MySQL实际决定使用的键（索引）。如果没有选择索引，键是NULL。要想强制MySQL使用或忽视possible_keys列中的索引，在查询中使用FORCE INDEX、USE INDEX或者IGNORE INDEX。
+
+key_len
+key_len列显示MySQL决定使用的键长度。如果键是NULL，则长度为NULL。使用的索引的长度。在不损失精确性的情况下，长度越短越好 。
+计算方法： 1. 索引字段的附加信息：
+1.1 当索引字段为变长数据类型，比如：varchar，需要有长度信息，需要占用2个字节，为定长数据类型，比如char，int，datetime时，不需要占用字节。
+1.2 需要有是否为空的标记，这个标记需要占用1个字节；当字段为not null时，就不需要占用字节了。
+同时还需要考虑表所使用的字符集，不同的字符集，gbk编码的为一个字符2个字节，utf8编码的一个字符3个字节;
+
+ref
+ref列显示使用哪个列或常数与key一起从表中选择行。
+
+rows
+rows列显示MySQL认为它执行查询时必须检查的行数。注意这是一个预估值。
+
+Extra
+Extra是EXPLAIN输出中另外一个很重要的列，该列显示MySQL在查询过程中的一些详细信息，包含的信息很多，只选择几个重点的介绍下。
+● Using filesort
+MySQL有两种方式可以生成有序的结果，通过排序操作或者使用索引，当Extra中出现了Using filesort 说明MySQL使用了前者，但注意虽然叫filesort但并不是说明就是用了文件来进行排序，只要可能排序都是在内存里完成的。大部分情况下利用索引排序更快，所以一般这时也要考虑优化查询了。
+● Using temporary
+说明使用了临时表，一般看到它说明查询需要优化了，就算避免不了临时表的使用也要尽量避免硬盘临时表的使用。
+● Not exists
+MYSQL优化了LEFT JOIN，一旦它找到了匹配LEFT JOIN标准的行， 就不再搜索了。
+● Using index
+说明查询是覆盖了索引的，这是好事情。MySQL直接从索引中过滤不需要的记录并返回命中的结果。这是MySQL服务层完成的，但无需再回表查询记录。
+● Using index condition
+这是MySQL 5.6出来的新特性，叫做“索引条件推送”。简单说一点就是MySQL原来在索引上是不能执行如like这样的操作的，但是现在可以了，这样减少了不必要的IO操作，但是只能用在二级索引上，详情点这里。
+● Using where
+使用了WHERE从句来限制哪些行将与下一张表匹配或者是返回给用户。
+注意：Extra列出现Using where表示MySQL服务器将存储引擎返回服务层以后再应用WHERE条件过滤。
+EXPLAIN的输出内容基本介绍完了，它还有一个扩展的命令叫做EXPLAIN EXTENDED，主要是结合SHOW WARNINGS命令可以看到一些更多的信息。一个比较有用的是可以看到MySQL优化器重构后的SQL。
+
+Explain extended 选项介绍
+让我们再次验证一遍MySQL是如何优化不相关子查询为相关子查询。
+Query-4:
+explain extended select * from people where id in (select id from people where zipcode = 100000 union select id from people where zipcode = 200000 );
++----+--------------------+------------+--------+-----------------+---------+---------+------+------+----------+-----------------+
+| id | select_type        | table      | type   | possible_keys   | key     | key_len | ref  | rows | filtered | Extra           |
++----+--------------------+------------+--------+-----------------+---------+---------+------+------+----------+-----------------+
+|  1 | PRIMARY            | people     | ALL    | NULL            | NULL    | NULL    | NULL |    3 |   100.00 | Using where     |
+|  2 | DEPENDENT SUBQUERY | people     | eq_ref | PRIMARY,zipcode | PRIMARY | 8       | func |    1 |   100.00 | Using where     |
+|  3 | DEPENDENT UNION    | people     | eq_ref | PRIMARY,zipcode | PRIMARY | 8       | func |    1 |   100.00 | Using where     |
+| NULL | UNION RESULT       | <union2,3> | ALL    | NULL            | NULL    | NULL    | NULL | NULL |     NULL | Using temporary |
++----+--------------------+------------+--------+-----------------+---------+---------+------+------+----------+-----------------+
+4 rows in set, 5 warnings (0.00 sec)
+mysql> show warnings ;                                                                                                                                      +---------+------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Level   | Code | Message                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
++---------+------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Warning | 1739 | Cannot use ref access on index 'zipcode' due to type or collation conversion on field 'zipcode'                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Warning | 1739 | Cannot use range access on index 'zipcode' due to type or collation conversion on field 'zipcode'                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Warning | 1739 | Cannot use ref access on index 'zipcode' due to type or collation conversion on field 'zipcode'                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Warning | 1739 | Cannot use range access on index 'zipcode' due to type or collation conversion on field 'zipcode'                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Note    | 1003 | /* select#1 */ select `test`.`people`.`id` AS `id`,`test`.`people`.`zipcode` AS `zipcode`,`test`.`people`.`address` AS `address`,`test`.`people`.`lastname` AS `lastname`,`test`.`people`.`firstname` AS `firstname`,`test`.`people`.`birthdate` AS `birthdate` from `test`.`people` where <in_optimizer>(`test`.`people`.`id`,<exists>(/* select#2 */ select 1 from `test`.`people` where ((`test`.`people`.`zipcode` = 100000) and (<cache>(`test`.`people`.`id`) = `test`.`people`.`id`)) union /* select#3 */ select 1 from `test`.`people` where ((`test`.`people`.`zipcode` = 200000) and (<cache>(`test`.`people`.`id`) = `test`.`people`.`id`)))) |
++---------+------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+5 rows in set (0.00 sec)
+看到这里，不知道各位是否意识到我们的带有zipcode字段的测试都是用了整形，而实际他是一个字符型，我们的Query-4、Query-5、Query-6并没有使用到正确的索引
+mysql> explain select * from people where id = (select id from people where zipcode = 100000); 
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref   | rows | Extra                    |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+|  1 | PRIMARY     | people | const | PRIMARY       | PRIMARY | 8       | const |    1 | NULL                     |
+|  2 | SUBQUERY    | people | index | zipcode       | zipcode | 480     | NULL  |    3 | Using where; Using index |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+2 rows in set (0.00 sec)
+mysql> explain select * from people where id = (select id from people where zipcode = '100000');
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+| id | select_type | table  | type  | possible_keys | key     | key_len | ref   | rows | Extra                    |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+|  1 | PRIMARY     | people | const | PRIMARY       | PRIMARY | 8       | const |    1 | NULL                     |
+|  2 | SUBQUERY    | people | ref   | zipcode       | zipcode | 96      | const |    1 | Using where; Using index |
++----+-------------+--------+-------+---------------+---------+---------+-------+------+--------------------------+
+2 rows in set (0.00 sec)
+同样出现在了我们的Warning中
+| Warning | 1739 | Cannot use ref access on index 'zipcode' due to type or collation conversion on field 'zipcode'
+Explain extended作用
+1. 分析select语句的运行效果,除了获得select语句 使用的索引情况、排序的情况等，还可以在原本explain的基础上额外的提供一些查询优化的信息，进一步让我们了解sql的运行过程。
+2. 快速查看是否存在隐式的类型转换，这个对于索引效率的影响是致命的，一定杜绝。
+
+12、全量校验咋实现的？
+通过某个窗口进行数据校验
+13、如何查找未提交的事务，执行过的sql，当前连接历史上所有执行过的SQL
+1、查看当前连接历史上所有执行过的SQL
+performance_schema.events_statements_history
+
+SELECT sh.current_schema   AS database_name
+   ,t.thread_id
+   ,it.trx_mysql_thread_id         AS connection_id
+   ,it.trx_id
+   ,sh.event_id
+   ,it.trx_state
+   ,REPLACE(REPLACE(REPLACE(sh.`SQL_TEXT`,'\n',' '),'\r',' '),'\t',' ') AS executed_sql
+   ,it.trx_started
+   ,DATE_SUB(NOW(), INTERVAL (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='UPTIME') - sh.TIMER_START*10e-13 second) AS start_time
+   ,DATE_SUB(NOW(), INTERVAL (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='UPTIME') - sh.TIMER_END*10e-13 second)   AS end_time
+   ,(sh.TIMER_END-sh.TIMER_START)/1000000000000 AS used_seconds
+   ,sh.TIMER_WAIT/1000000000000 AS wait_seconds
+   ,sh.LOCK_TIME/1000000000000 AS lock_seconds
+   ,sh.ROWS_AFFECTED AS affected_rows
+   ,sh.ROWS_SENT AS send_rows
+FROM performance_schema.threads AS t
+INNER JOIN information_schema.innodb_trx it ON  it.trx_mysql_thread_id = t.processlist_id 
+INNER JOIN performance_schema.events_statements_history AS sh
+        ON t.`THREAD_ID`=sh.`THREAD_ID`
+WHERE t.PROCESSLIST_ID IN (
+                SELECT 
+                      p.ID AS conn_id
+                FROM `information_schema`.`INNODB_TRX` t
+                INNER JOIN `information_schema`.`PROCESSLIST` p
+                        ON t.trx_mysql_thread_id=p.id
+                WHERE t.trx_state='RUNNING'
+                  AND p.COMMAND='Sleep'
+                  AND p.TIME>2
+                )
+AND sh.TIMER_START<@dt_timer
+AND DATE_SUB(NOW(), INTERVAL (SELECT VARIABLE_VALUE FROM performance_schema.global_status WHERE VARIABLE_NAME='UPTIME') - sh.TIMER_START*10e-13 second) >=it.trx_started
+ORDER BY it.trx_id ASC, sh.TIMER_START ASC;
+15、sys和
+
+performance schema、sys schema概述
+
+
+performance schema最早在MySQL5.5中出现，MySQL5.6、5.7中performance Schema又添加了更多的监控项，统计信息也更丰富。
+
+
+
+1. setup配置表
+
+setup_actors用于配置user维度的监控, 默认会监控所有用户。
+
+
+setup_instruments表用于配置一条条具体的instrument, 也就是说哪些“采集项”需要开启监控。如何查看默认开始的监控项? select * from setup_instruments where ENABLED = 'YES'; 其中ENABLED列表示是否为该instrument收集事件，TIMED列表示是否为该instrument计时。如果TIMED列的值被关闭，就不会去为对应的事件生成 TIMER_START ,  TIMER_END , 以及  TIMER_WAIT的值。
+
+
+setup_consumers表用于配置事件的消费者类型，即收集的事件最终会写入到哪些统计表中。如何查看默认写入的统计表？ select * from performance_schema.setup_consumers;
+
+
+setup_objects表用于配置监控对象，即哪些库表需要监控，默认情况下所有mysql，performance_schema和information_schema中的表都不监控。而其它DB的所有表都监控。
+
+setup_timers表用于配置每种类型指令的统计时间单位。MICROSECOND表示统计单位是微秒，CYCLE表示统计单位是时钟周期，时间度量与CPU的主频有关，NANOSECOND表示统计单位是纳秒。但无论采用哪种度量单位，最终统计表中统计的时间都会装换到皮秒。（1秒＝1000000000000皮秒）
+
+
+
+2. event表
+
+记录了各种事件(stages/statements/transactions/waits/memory)，提供了当前表(current)、历史表(history)、history_long表。
+
+
+history 表记录了每个线程的最近的10 个事件。
+
+history_long记录了10000 个事件。这两个历史表都是先进先出（FIFO)的规则。
+
+
+
+3. summary表
+
+是对event的统计数据；summary表可以被truncate，但是不是真正的删掉所有的行，而是把column置为0或者null
+
+https://dev.mysql.com/doc/refman/5.7/en/performance-schema-summary-tables.html
+
+
+
+
+
+sys schema是从5.7开始有的，它主要是基于performance schema和information schema的视图。如果需要看看sys schema中的数据是怎么算出来的，很简单，show create table xxx即可。
+
+root@sys 08:24:11>show create table schema_unused_indexes\G
+*************************** 1. row ***************************
+                View: schema_unused_indexes
+         Create View: CREATE ALGORITHM=MERGE DEFINER=`mysql.sys`@`localhost` SQL SECURITY INVOKER VIEW `schema_unused_indexes` 
+         AS select `performance_schema`.`table_io_waits_summary_by_index_usage`.`OBJECT_SCHEMA` AS `object_schema`,
+         `performance_schema`.`table_io_waits_summary_by_index_usage`.`OBJECT_NAME` AS `object_name`,
+         `performance_schema`.`table_io_waits_summary_by_index_usage`.`INDEX_NAME` AS `index_name` 
+         from `performance_schema`.`table_io_waits_summary_by_index_usage` 
+         where ((`performance_schema`.`table_io_waits_summary_by_index_usage`.`INDEX_NAME` is not null) 
+         and (`performance_schema`.`table_io_waits_summary_by_index_usage`.`COUNT_STAR` = 0) 
+         and (`performance_schema`.`table_io_waits_summary_by_index_usage`.`OBJECT_SCHEMA` <> 'mysql') 
+         and (`performance_schema`.`table_io_waits_summary_by_index_usage`.`INDEX_NAME` <> 'PRIMARY')) 
+         order by `performance_schema`.`table_io_waits_summary_by_index_usage`.`OBJECT_SCHEMA`,`performance_schema`.`table_io_waits_summary_by_index_usage`.`OBJECT_NAME`
+character_set_client: utf8
+collation_connection: utf8_general_ci
+1 row in set (0.00 sec)
+
+哪些信息对DBA有价值
+
+1. innodb bp中存了哪些数据（强需要）
+没有sys schema之前，想要知道innodb bp中存了哪些数据，需要在information_schema.innodb_buffer_page这张表中去查。
+
+线上环境bp很大时，查询非常缓慢。实际上，mysql官方文档也不建议直接在线上环境去查询innodb_buffer_page表。
+
+https://dev.mysql.com/doc/refman/5.7/en/innodb-buffer-page-table.html
+
+Warning
+
+Querying the INNODB_BUFFER_PAGE table can introduce significant performance overhead. Do not query this table on a production system unless you are aware of the performance impact that your query may have, and have determined it to be acceptable. To avoid impacting performance, reproduce the issue you want to investigate on a test instance and query the INNODB_BUFFER_PAGE table on the test instance.
+
+
+
+sys schema提供了按照库、表维度聚合的innodb bp信息。
+
+innodb_buffer_stats_by_schema, x$innodb_buffer_stats_by_schema	InnoDB buffer information, grouped by schema
+innodb_buffer_stats_by_table, x$innodb_buffer_stats_by_table	InnoDB buffer information, grouped by schema and table
+当然，如果想知道innodb bp中索引维度的分布，还是需要去查innodb_buffer_page表的。
+
+查询bp中有哪些数据对我们的意义在于：
+
+（1）知道哪些是热数据。
+
+（2）innodb bp中的数据是否出现频繁换入换出，从而指导我们是否要升级BP大小、优化索引等。
+
+2. 锁等待的信息（强需要）
+之前是需要information schema下三个表去做关联：innodb_trx、innodb_lock_waits、innodb_locks
+
+现在从sys schema中innodb_lock_waits一张表就可以拿到所有信息了。
+
+innodb_lock_waits, x$innodb_lock_waits	InnoDB lock information
+
+
+
+3. 索引类，可以指导我们去删索引（强需要）
+
+3.1 未使用到的索引
+schema_unused_indexes	Indexes not in active use
+查看视图的创建过程，可以了解到，schema_unused_indexes是基于`performance_schema`.`table_io_waits_summary_by_index_usage`表获取的结果。
+
+有几点说明：
+
+（1）正因为它基于的是summary表，所以统计的是一段时间的结果。
+
+（2） `table_io_waits_summary_by_index_usage`这张summary表可以被truncate，但是并不是真正删除所有行，而是把column列置为0或者NULL。
+
+（3） DDL操作后，column列会置为0或者NULL。index的使用重新计数。
+
+
+
+所以，我们基于schema_unused_indexes去删除索引时，需要注意：
+
+（1）table_io_waits_summary_by_index_usage采集的时间足够长，这样才能反映出业务的真实情况。
+
+（2）采集的时间段内，要注意是否有DDL语句，DDL会对结果造成干扰。
+
+
+
+
+3.2 重复冗余的索引
+schema_redundant_indexes	Duplicate or redundant indexes
+
+
+
+
+
+4. 表相关的统计信息（强需要）
+
+
+
+4.1 监控表自增主键是否溢出
+故障：P3
+广告有个库主键id值达到int上限溢出，表结构变更持续一天。主键id上限已提交需求放入巡检系统。
+
+4.2 判断单张表的读写比
+DBA使用 orzdba只能获取到实例维度 IUD比值，往往很难判断某张表是否有读写。
+
+基于 `performance_schema`.`table_io_waits_summary_by_table` 中的数据，可以方便的判断出来表是否有读写流量。应该比基于全量SQL去分析计算更方便。
+
+应用场景：无流量的表下线；只写类型的表迁移到AliRocks。
+
+5. statement维度的统计信息（非强需要）
+这部分和SQL全量采集的功能有重叠，但是performance schema和 sys schema的优势在于，可以快速的提供出统计功能，比如：哪些SQL在进行全表扫描，哪些SQL的RT高，哪些SQL使用了排序、临时表等。
+
+如果CloudDBA把这部分的统计功能做强，那么可以取代这部分了。
+
+
+
+statement_analysis, x$statement_analysis	Statement aggregate statistics
+statements_with_errors_or_warnings,x$statements_with_errors_or_warnings	Statements that have produced errors or warnings
+statements_with_full_table_scans,x$statements_with_full_table_scans	Statements that have done full table scans
+statements_with_runtimes_in_95th_percentile,x$statements_with_runtimes_in_95th_percentile	Statements with highest average runtime
+statements_with_sorting, x$statements_with_sorting	Statements that performed sorts
+statements_with_temp_tables, x$statements_with_temp_tables	Statements that used temporary tables
+
+
+6. IO维度的统计信息（强需要）
+
+这部分很需要！
+
+以前经常会碰到这样的场景：物理机的IO负载很高（iostat中的%util），但是无法快速的定位到IO负载的来源进程和来源文件，导致无法进行相应的策略来解决问题。
+
+我们通常只能猜到是mysql导致的高IO，但是没法定位具体是哪个文件带来的负载。
+
+
+
+
+
+通过performance schema、sys schema中的IO统计数据：
+
+（1）可以清楚的知道哪个文件是被访问的最频繁，压力最大，延迟最多的文件。
+
+（2）可以实时监控redo log、undo、binlog的写入量。
+
+（3）可以清楚的知道某个库级别、表级别的压力情况。
+
+（4）可以知道哪些表是以读为主，哪些表是以写为主。从而又进一步做缓存和业务监控。
+
+
+
+io_by_thread_by_latency, x$io_by_thread_by_latency	I/O consumers, grouped by thread
+io_global_by_file_by_bytes, x$io_global_by_file_by_bytes	Global I/O consumers, grouped by file and bytes
+io_global_by_file_by_latency, x$io_global_by_file_by_latency	Global I/O consumers, grouped by file and latency
+io_global_by_wait_by_bytes, x$io_global_by_wait_by_bytes	Global I/O consumers, grouped by bytes
+io_global_by_wait_by_latency, x$io_global_by_wait_by_latency	Global I/O consumers, grouped by latency
+latest_file_io, x$latest_file_io	Most recent I/O, grouped by file and thread
+
+
+
+以上表格中的视图 基础数据来源于以下表：
+
+`performance_schema`.`events_waits_summary_by_thread_by_event_name` left join `performance_schema`.`threads`
+
+`performance_schema`.`file_summary_by_instance`
+
+`performance_schema`.`file_summary_by_event_name` where `EVENT_NAME` like 'wait/io/file/%'
+
+
+
+
+
+
+
+
+7. memory维度的统计信息（强需要）
+统计各个维度的内存消耗。
+
+以前我们对内存消耗的统计数据 知道得比较少，主要是定性的分析，而不是定量的计算(https://askdba.alibaba-inc.com/libary/control/getArticle.do?articleId=68261)。
+
+
+
+memory_by_host_by_current_bytes,x$memory_by_host_by_current_bytes	Memory use, grouped by host
+memory_by_thread_by_current_bytes,x$memory_by_thread_by_current_bytes	Memory use, grouped by thread
+memory_by_user_by_current_bytes,x$memory_by_user_by_current_bytes	Memory use, grouped by user
+memory_global_by_current_bytes, x$memory_global_by_current_bytes	Memory use, grouped by allocation type
+memory_global_total, x$memory_global_total	Total memory use
+
+
+
+
+
+
+
+8. wait维度的统计信息
+blob.png
+
+wait/io ： IO 等待事件
+
+wait/io/file ： 文件IO等待事件。等待文件操作完成的时间如：fwrite()。
+
+wait/io/socket： socket相关的IO等待
+
+wait/io/table ： 表相关的IO等待。一般对于记录rows来说有fetch，insert，update，delete四种操作。 不像其他等待事件，table I/O 还包含了其他的等待事件。比如：table io可能包含了文件IO和内存IO。因为读取table rows的时候，有可能会去从文件读取数据。
+
+
+
+wait/lock
+
+wait/lock/table ： 表操作的锁等待事件  (案例： https://askdba.alibaba-inc.com/libary/control/getArticle.do?articleId=13264, 通过wait/lock/table/sql/handler 观察出MySQL的瓶颈在table_open_cache )
+
+wait/lock/metadata：metadata lock 等待事件（案例： http://www.kancloud.cn/taobaomysql/monthly/81108， 通过performance_schema.metadata_locks分析metadata lock）
+
+
+
+
+
+wait/synch
+
+wait/synch/cond ：condition就是线程与线程之间的信号
+
+wait/synch/mutex ： mutex主要用来锁住一块共享资源
+
+wait/synch/rwlock ： 读写锁
+
+
+
+wait_classes_global_by_avg_latency,x$wait_classes_global_by_avg_latency	Wait class average latency, grouped by event class
+wait_classes_global_by_latency,x$wait_classes_global_by_latency	Wait class total latency, grouped by event class
+waits_by_host_by_latency, x$waits_by_host_by_latency	Wait events, grouped by host and event
+waits_by_user_by_latency, x$waits_by_user_by_latency	Wait events, grouped by user and event
+waits_global_by_latency, x$waits_global_by_latency	Wait events, grouped by event
+
+
+
+
+
+
+
+14、平时调整过的db参数
+我们可以把影响线上DB性能的因素归为三类：1、业务逻辑问题 2、DB端设置问题 3、硬件问题
+innodb_flush_log_at_trx_commit
+sync_binlog
+BP设置过小
+
+必须掌握的调优参数
+innodb_flush_log_at_trx_commit & sync_binlog
+在BGC之前，调整这两个参数，能极大降低磁盘的I/O请求(减少排队)，降低请求响应时间，提升TPS；
+
+innodb_log_file_size & innodb_log_files_in_group
+控制日志文件大小。在写入频繁的系统下，小日志文件更易引发系统的同步刷脏页(引入新的串行点)，TPS急剧下降；
+innodb_io_capacity & innodb_read_io_threads & innodb_write_io_threads & innodb_purge_threads
+根据硬件配置以及系统的读写请求，恰到好处的配置这些参数，能够最大限度的发挥磁盘的性能，同时保证系统较好的响应时间；
+
+
+
+16、排查烂sql的时候，关注业务需求和使用场景
+我们可以把影响线上DB性能的因素归为三类：1、业务逻辑问题 2、DB端设置问题 3、硬件问题
+17、日增数据量8千万，如何设计分库分表
+本文适合阅读群众
+需要从单库单表改造为多库多表的新手。
+
+主要阐述在分库分表改造过程中需要考虑的因素以及对应的解法，还有踩过的那些坑。
+一、前言
+我们既然要做分库分表，那总要有个做事的动机。那么，在动手之前，首先就要弄明白下面2个问题。
+1、什么是分库分表？
+其实就是字面意思，很好理解
+分库：从单个数据库拆分成多个数据库的过程，将数据散落在多个数据库中
+分表：从单张表拆分成多张表的过程，将数据散落在多张表内
+2、为什么要分库分表？
+关键字 提升性能 增加可用性
+
+从性能上看
+
+   随着单库中的数据量越来越大、数据库的查询QPS越来越高，相应的，对数据库的读写所需要的时间也越来越多。
+
+数据库的读写性能可能会成为业务发展的瓶颈。对应的，就需要做数据库性能方面的优化。
+
+本文中我们只讨论数据库层面的优化，不讨论缓存等应用层优化的手段。
+
+   如果数据库的查询QPS过高，就需要考虑拆库，通过分库来分担单个数据库的连接压力。
+
+比如，如果查询QPS为3500，假设单库可以支撑1000个连接数的话，那么就可以考虑拆分成4个库，来分散查询连接压力。
+
+   如果单表数据量过大，当数据量超过一定量级后，无论是对于数据查询还是数据更新，在经过索引优化等纯数据库层面的传统优化手段之后，还是可能存在性能问题。
+
+   这是量变产生了质变，这时候就需要去换个思路来解决问题，比如：从数据生产源头、数据处理源头来解决问题，既然数据量很大，那我们就来个分而治之，化整为零。
+
+这就产生了分表，把数据按照一定的规则拆分成多张表，来解决单表引起的存取性能问题。
+从可用性上看
+   单一数据库如果发生意外，那可能会丢失所有数据。尤其是云时代，很多数据库都跑在虚拟机上，如果虚拟机/宿主机发生意外，则可能造成无法挽回的损失。
+
+除了传统的 Master-Slave、Master-Master 等部署层面解决可靠性问题外，我们也可以考虑从数据拆分层面解决此问题。
+
+   此处我们以数据库宕机为例：
+   
+   （1）单库部署情况下，如果数据库宕机，那么故障影响就是100%，而且恢复可能耗时很长。
+   
+   （2）如果我们拆分成2个库，分别部署在不同的机器上，此时其中1个库宕机，那么故障影响就是50%，还有50%的数据可以继续服务。
+   
+   （3）如果我们拆分成4个库，分别部署在不同的机器上，此时其中1个库宕机，那么故障影响就是25%，还有75%的数据可以继续服务，恢复耗时也会很短。
+
+   当然，我们也不能无限制的拆库，这也是牺牲存储资源来提升性能、可用性的方式，毕竟资源总是有限的。
+二、如何分库分表？
+1、分库？分表？还是既分库又分表？
+从第一部分了解到的信息来看，分库分表方案可以分为下面3种：
+切分方案	解决的问题
+只分库不分表	数据库读/写QPS过高，数据库连接数不足
+只分表不分库	单表数据量过大，存储性能遇到瓶颈
+既分库又分表	连接数不足 + 数据量过大引起的存储性能瓶颈
+2、如何选择我们自己的切分方案？
+如果需要分表，那么分多少张表合适？
+   由于所有的技术都是为业务服务的，那么，我们就先从数据方面回顾下业务背景。
+   
+   由于，我们这个业务系统是解决会员的诉求问题，通常通过我们的XSpace客服平台来服务会员，目前主要以同步的离线工单数据作为我们的数据源来构建自己的数据。
+
+每一笔离线工单都会产生对应一笔会员问题诉求单（简称：问题单），从当时产品、运营提供的数据来看：
+
+
+   （1）在线渠道：每天产生 5w 笔聊天会话，其中，离线工单转化率大约为 30%，预计可产生工单 5w * 30% = 1.5w 笔/天；
+
+   （2）热线渠道：每天产生 2w 通电话，其中，每通电话都会产生一笔工单，离线工单转化率 100%，预计可产生工单 2w * 100% = 2w 笔/天；
+
+   （3）离线渠道：从离线渠道直接介入产生的工单大约每天 3.5w 笔；
+
+    合计共 1.5w + 2w + 3.5 = 7w 笔/天
+   
+    考虑到以后可能要继续覆盖的纠纷等场景，需要预留部分扩展空间，暂定为每天产生 8w 笔问题单。
+    
+    除问题单外，还有另外2张常用的业务表：用户操作日志表、用户提交的表单数据表。
+    
+    其中，每笔问题单都会产生多条用户操作日志，从之前线上的统计数据来看，每笔问题单平均会产生8条操作日志，我们预留一部分空间，假设每个问题单平均产生约10条用户操作日志。
+   
+    如果系统设计使用年限5年，那么问题单存储量 = 5年 * 365天/年 * 8w/天 = 1.46亿，那么估算出的表数量如下：
+    
+    （1）问题单需要   ：1.46亿/500w = 29.2 张表，我们就按 32 张表来切分；
+    
+    （2）操作日志需要 ：32 * 10   = 320 张表，我们就按 32 * 16 = 512 张表来切分。
+如果需要分库，那么分多少库合适？
+  分库的时候除了要考虑平时的业务峰值读写QPS外，还要考虑到诸如双11大促期间可能达到的峰值，需要提前做好预估。
+  
+  根据我们的实际业务场景，问题单的数据查询来源主要来自于阿里客服小蜜首页。所以，按照以往小蜜的双11压测峰值，QPS可能要8000+左右，再结合实际的RT，以及冗余扩展，我们只需要3000+峰值连接数即可。
+  
+  如果单库可以承担最高1000个数据库连接，那么我们就可以拆分成4个库。
+3、如何对数据进行切分？
+根据行业惯例，通常按照 水平切分、垂直切分 两种方式进行切分，当然，有些复杂业务场景也可能选择两者结合的方式
+
+水平切分
+
+这是一种横向按业务维度切分的方式，比如常见的按会员维度切分，根据一定的规则把不同的会员相关的数据散落在不同的库表中。
+由于我们的业务场景决定都是会员视角去读写数据，所以，我们就选择按照水平方式进行数据库切分。
+垂直切分
+
+垂直切分可以简单理解未，把一张表的不同字段拆分到不同的表中。
+比如：假设有个小型电商业务，把一个订单相关的商品信息、买卖家信息、支付信息都放在一张大表里。
+如果可以通过垂直切分的方式，把商品信息、买家信息、卖家信息、支付信息都单独拆分成独立的表，并通过订单号跟订单基本信息关联起来。
+
+也有一种情况，如果一张表有10个字段，其中只有3个字段需要频繁修改，那么就可以考虑把这3个字段拆分到子表。避免在修改这3个数据时，影响到其余7个字段的查询行锁定。
+三、分库分表后会存在哪些问题？
+1、分库分表后，如何让数据均匀散落在各个分库分表内？
+当热点事件出现后，怎么避免热点数据集中存取到某个特定库/表，造成各分库分表读写压力不均的问题？
+
+其实，细思之下可以发现这个问题其实跟负载均衡的问题很相似，所以，我们可以去借鉴下负载均衡的解法来解决。我们常见的负责均衡算法如下：
+
+我们的选择：基于 一致性Hash算法 裁剪
+
+相较于一致性Hash算法，我们裁剪后的算法主要区别在以下2个点：
+
+Hash环节点数量的不同：
+
+一致性Hash有2^32个节点，考虑到我们按照buyerId切分，而且buyerId基数本就很庞大，整体已经具备一定的均匀度，所以，我们把Hash环的数量降低到4096个；
+DB索引算法的不同：
+
+一致性Hash通过类似hash(DB的IP) % 2^32公式计算DB在Hash环的位置。如果DB数量较少，需要通过增加虚拟节点来解决Hash环偏斜问题，而且DB的位置可能会随着IP的变动而变化，尤其是在云环境下。
+数据均匀分布到Hash环的问题，经过之前的判断，我们可以通过Math.abs(buyerId.hashCode()) % 4096计算定位到Hash环位置，那么剩下的问题就是让DB也均匀分布到这个Hash环上即可。由于我们都是使用阿里的TDDL中间件，只需要通过逻辑上的分库索引号定位DB，因此，我们把分库DB均分到这个Hash环上即可，如果是hash环有4096个环节，拆分4库的话，那么4个库分别位于第1、1025、2049、3073个节点上。分库的索引定位可通过(Math.abs(buyerId.hashCode()) % 4096) / (4096 / DB_COUNT)这个公式计算得出。
+18、这半年对OB的运维咋样
+
+19、varchar = 1 or int = '1'
+在 MySQL 中，字符串和数字做比较的话，是将字符串转换成数字。
+
+21、innodb的事务，幻读和不可重复读，事务的是否可见
+ACID
+原子性指的是一个事务中的操作要么全部成功，要么全部失败。
+一致性指的是数据库总是从一个一致性的状态转换到另外一个一致性的状态。比如A转账给B100块钱，假设中间sql执行过程中系统崩溃A也不会损失100块，因为事务没有提交，修改也就不会保存到数据库。
+隔离性指的是一个事务的修改在最终提交前，对其他事务是不可见的。
+持久性指的是一旦事务提交，所做的修改就会永久保存到数据库中。
+
+A原子性由undo log日志保证，它记录了需要回滚的日志信息，事务回滚时撤销已经执行成功的sql
+C一致性一般由代码层面来保证
+I隔离性由MVCC来保证
+D持久性由内存+redo log来保证，mysql修改数据同时在内存和redo log记录这次操作，事务提交的时候通过redo log刷盘，宕机的时候可以从redo log恢复
+
+幻读和不可重复读都是读取了另一条已经提交的事务(这点就脏读不同)，所不同的是不可重复读可能发生在update,delete操作中，而幻读发生在insert操作中。
+从传统的可重复读隔离级别只解决了不可重复读，没有解决幻读的问题，但是mysql innodb 引擎通过引入 gap key解决了幻读问题
+RR 引入了 间隙锁解决了幻读的问题  间隙锁和行锁合称 next-key lock
+
+v1 -> v2 -> v3 -> v4
+undo log 实际上，图中的三个虚线箭头，就是 undo log；而 V1、V2、V3 并不是物理上真实存在的，而是每次需要的时候根据当前版本和 undo log 计算出来的。比如，需要 V2 的时候，就是通过 V4 依次执行 U3、U2 算出来。
+可重复读问题，事务是否可见
+
+一个事务只需要在启动的时候声明说，“以我启动的时刻为准，如果一个数据版本是在我启动之前生成的，就认；如果是我启动以后才生成的，我就不认，我必须要找到它的上一个版本”。
+当然，如果“上一个版本”也不可见，那就得继续往前找。还有，如果是这个事务自己更新的数据，它自己还是要认的。
+在实现上， InnoDB 为每个事务构造了一个数组，用来保存这个事务启动瞬间，当前正在“活跃”的所有事务 ID。“活跃”指的就是，启动了但还没提交。
+数组里面事务 ID 的最小值记为低水位，当前系统里面已经创建过的事务 ID 的最大值加 1 记为高水位。
+这个视图数组和高水位，就组成了当前事务的一致性视图（read-view）。
+< 低水位的事务ID代表已提交事务，
+低水位< id >高水位  
+	a. 若 row trx_id 在数组中，表示这个版本是由还没提交的事务生成的，不可见；
+  b. 若 row trx_id 不在数组中，表示这个版本是已经提交了的事务生成的，可见。
+>高水位代表未提交事务
+
+22.MHA，linux域名的缓存
+1.从宕机崩溃的 Master 保存二进制日志事件（binlog event）；
+2. 识别含有最新更新的 Slave；
+3. 应用差异的中继日志（relay log）到其他 Slave；
+4. 应用从 Master 保存的二进制日志事件；
+5. 提升一个 Slave 为新的 Master；
+6. 使其他的 Slave 连接新的 Master 进行复制；
+24、mysql 8.0和5.7 5.6相比有啥特性
+可靠性：8.0把元数据相关的表改为innodb引擎；8.0中数据字段只保留一份（5.7及之前的版本，server层和innodb层各存储一份）；
+ddl操作在8.0上变为原子操作(atomic & crash safe；通过DDL_LOG实现)。
+
+
+1、倒序索引
+优化效果在于多个字段的不同排序规则，比如a desc, b asc，对于a desc,b desc 或者 a asc,b asc这种不需要优化
+5.7之前的倒序都是通过文件排序来做的，8.0后数据组织就可以按照desc进行，所以效果比较好
+
+2、online DDL instant
+目前比较常用的场景是增加字段，改字段默认值，可以做到立刻完成，体感非常好
+修改字段类型，长度等等还是得用老的逻辑，无法instant
+3、Role and Resource Manager
+增加了role的定义，role是一组权限的集合，可以像oracle一样，直接将某个角色赋予用户，比较方便
+resource manager可以控制role cpu的使用，可以控制线程优先级等等，实现了资源隔离
+4、parallel index reads
+8.0.14 支持索引的并发扫描，加快count之类的速度
+5、REDO的优化
+redo的优化似乎是8.0读写性能优于以往的主要原因
+redo的模型改成了事件驱动，而不是通过争抢锁实现，专用的flush线程刷完IO后通知用户线程，并且会根据IO的rt自动调整每次flush的data大小，如果io延迟很低，就大量小IO，如果IO延迟高，就用大io刷，也就说redo的刷写能力完全取决于IO的吞吐
+但是事件驱动的方式在小并发下性能没有单线程锁的方式高效，这块已经优化了，需要自己测下效果
+25、8.0和5.7 5.6主从复制的区别
+在前面两阶段提交逻辑的COMMIT阶段，主库在写Binlog日志到Binlog文件时，同时也将这部分Binlog推送给从库的I/O线程，从库I/O线程把接收到的Binlog写入到Relay Log中。主库写完Binlog后就调用fsync将文件同步到磁盘上，然后清理InnoDB事务状态和UNDO状态并释放锁（表示InnoDB事务提交成功了），然后反馈给客户端提交成功。
+这其中从库同步binlog的方式是异步的，主库并不确认从库是否拉取了所有的Binlog，因此也不能保证从库跟主库是保持一致的。
+半同步就是为了解决这个问题，在主库写完Binlog调用fsync同步刷新时，主库会等待从库返回确认收到所有的Binlog。收到确认后主库做InnoDB的提交动作，然后返回给客户端”COMMIT成功”消息。这是 MySQL 5.7的默认模式（5.6等待从库确认的顺序不一样）。当主库有多个从库的时候，主库只需要等待一个从库的确认消息就可以返回。
+就是主库在InnoDB事务提交成功后才去等待从库消息。跟上面的区别是一个是在主库Binlog同步后等待从库消息，一个是在主库InnoDB事物日志提交后等待从库消息。在5.7里这两个模式都支持，具体由参数 rpl_semi_sync_master_wait_point 控制 [11] 。这个参数有两个值：AFTER_SYNC和AFTER_COMMIT。我们推荐用AFTER_SYNC。
+
+
+主从复制报错修复
+key not found : 
+update row events 补充记录的前镜像（before image）,可能会造成表上unique key的冲突，此时首先删除冲突uk对应的记录，然后执行补偿前镜像的操作，如果有多个字段的unique key冲突，可以删除多条记录
+delete row events 补充记录的前镜像（before image），然后执行删除操作
+
+dup key error：
+write row events  直接overwrite 记录
+update row events  更新后镜像时（after image），有可能会造成表上的unique key冲突，此时会首先删除冲突uk对应的记录，然后执行后镜像的操作，如果有多个字段的unique key冲突，可以删除多条记录
+从库上执行的相关补偿和删除操作都不会记Binlog
+26、sql执行的整个流程
+sql查询语句和 DML语句
+查询语句：客户端-连接器-分析器(词法，语法分析) - 优化器（执行计划生成，索引选择）- 执行器（操作引擎，返回结果）-存储引擎 存储数据，提供读写接口
+DML语句：
+执行器先找引擎取 ID=2 这一行。ID 是主键，引擎直接用树搜索找到这一行。如果 ID=2 这一行所在的数据页本来就在内存中，就直接返回给执行器；否则，需要先从磁盘读入内存，然后再返回。
+执行器拿到引擎给的行数据，把这个值加上 1，比如原来是 N，现在就是 N+1，得到新的一行数据，再调用引擎接口写入这行新数据。
+引擎将这行新数据更新到内存中，同时将这个更新操作记录到 redo log 里面，此时 redo log 处于 prepare 状态。然后告知执行器执行完成了，随时可以提交事务。
+执行器生成这个操作的 binlog，并把 binlog 写入磁盘。
+执行器调用引擎的提交事务接口，引擎把刚刚写入的 redo log 改成提交（commit）状态，更新完成。
+既然提到“逻辑读”，也就不能不提”物理读”。“物理读”只数据库从磁盘上将数据块/页读入到数据库内存中。当一个“逻辑读”要访问的数据块/页不在内存中，就触发一个“物理读”。而 （“逻辑读”-“物理读”）/ （“逻辑读”） 就是 Buffer Pool的命中率。物理读和命中率对评估数据库内存是否合适有很大参考意义。这个作为辅助手段。
+MySQL没有sql级别的逻辑读和物理读展示，但有实例级别的。(补充：mysql 慢日志里有慢查sql的逻辑读和物理读指标。)其status变量如下分别代表“逻辑读”和“物理读”。
+root@(none) 03:41:34>show global status where variable_name in ('Innodb_buffer_pool_read_requests', 'Innodb_buffer_pool_reads');
++----------------------------------+-------------+
+| Variable_name                    | Value       |
++----------------------------------+-------------+
+| Innodb_buffer_pool_read_requests | 22004730401 |
+| Innodb_buffer_pool_reads         | 422205592   |
++----------------------------------+-------------+
+2 rows in set (0.00 sec)
+27. 数据页碎片和Optimize分析
+Innodb的空间管理采用逻辑分层的结构，由row组成page，连续的64个page组成extent，extent再组成segment。
+page包含38个字节的文件头和8个字节的文件尾。
+文件头：page number在page初始化时生成，previous page和next page是指向前一个page和后一个page的指针，通过双向链表将本层级的page连接起来。Page type标识了本page的类型，如B-tree node、undo log page等。FLUSH LSN只在space 0的page 0 中有记录，其他page中为0。Space id是本文件的space id。
+文件尾：
+其中和本文内容相关的：
+Page_heap_top：堆中空闲空间的位置
+Page_free：指向最近删除的记录空间，通过该记录的头信息可找到下一个被删除的记录
+Page_garbage：page内被标记为删除的行的总空间大小
+当记录在页中申请空间时，首先会检测page_free指向的空间，如果容量大于申请的空间则直接使用该空间，否则从Page_heap_top申请空间，这里需要注意，page_free指向的是最近删除的空间，空间申请时只与最近删除的空间大小做比较，而不会向前找之前删除的空间。
+
+compact行格式：
+变长字段长度列表：按照列的顺序逆序放置，存储非NULL变长字段长度，列长度小于255用1字节表示，列长度大于255用2个字节表示
+NULL标示位：标示记录中是否有NULL值,1个字节
+记录头信息：固定占用5个字节（40位）
+	Deleted_flag：删除标示，当一行记录被删除时，会将这个为置成1.
+	Heap_no：索引中该条记录的排序记录
+	Record_type：记录类型，000为普通，001为B+树指针，010为infimum，011为supremum
+	Next_recorder：页中下一条记录的相对位置，计算方式如下：
+  本记录头信息位置开始 + Next_recorder  = 下一行记录的头信息起始位置
+主键or row id：主键或row id，如果是row id，则占用6个字节
+Trx id：修改本行记录的事务id
+回滚段指针：指向本行记录的前镜像
+
+碎片产生原因
+通过上述内容，我们对数据在文件上组织方式已经有了一定认识，那么再回来说说为什么会存在这些碎片空间？以及空洞带来的影响。
+常见碎片产生原因：
+数据删除或更新，原空间无法复用，通常出现在变长字段中
+数据插入导致页分裂，页的填充率降低
+数据更新导致的页分裂、原记录存储位置“空洞”等
+碎片带来的负面影响：
+占用大量的磁盘
+可能导致查询扫描的IO成本提升，效率降低
+示例：
+1、由于新纪录长度大于更新前，旧的位置无法放下新纪录，所以新纪录从Page_heap_top中获取空闲的空间来存放，不能复用旧的位置
+2、出现上面这种情况的原因是innodb删除一行数据，只是做了一个删除标示，并将其空间放入了可回收空间的首部(Page_free指向)，
+这样在插入新数据的时候，innodb只检查第一个可重用空间，如果满足则复用，如果不满足则通过Page_heap_top分配新的空间。
+这样导致了上面的情况： (4，‘aaaa’)先删除， (1,‘a’)后删除，插入(4,‘ccc’)的时候验证(1,‘a’)的空间是不能容纳(4,‘ccc’)，innodb直接给它用了新空间，而没有使用满足条件的(4，‘aaaa’)的位置，innodb有回收page内空间的方式(page写满时进行重组)，
+但是这里至少说明空间回收利用是不及时的，碎片可能会长久存在。
+
+综合前面所述，innodb文件碎片主要以行间碎片和剩余空间碎片的形式存在，在如下场景可能会比较严重：
+删除操作比较多
+主键随机插入（顺序插入fill factor大约93%，随机插入fill factor的范围50%到93%）
+更新操作非rewrite方式（变长更新）导致行间隙或者页分裂
+二级索引比较多，更新导致索引页碎片
+实际的生产环境可以通过自增主键、限制字段非空，避免更新变长字段大小，合理设计二级索引等方式一定程度上减少碎片，
+但是要彻底的完成碎片清理还是optimize。optimize操作已经支持onlineDDL，
+并且optimize操作后页上还会预留7%的空间给未来可能的更新，这样不仅可以使整理后的数据存储更紧凑有序，还能很大程度上避免“空间反弹”问题（更新导致页分裂等）的出现。
+
+28. 如果出现误删数据，例如误删某张表，如何快速恢复
+1、全量备份恢复出临时实例，
+2、然后从日志备份中取出0点后的日志除了误删除数据的语句
+3、通过mysqlbinglog应用日志   -通过指定-database，避免恢复数据时还要应用其他db的日志
+
+快速恢复的办法：
+1、使用备份恢复出一个临时实例，将这个临时实例设置成线上备库的
+	在 start slave 之前，先通过执行 change replication filter replicate_do_table = (tbl_name) 命令，就可以让临时库只同步误操作的表；
+  这样做也可以用上并行复制技术，来加速整个数据恢复过程。
+可以看到，图中 binlog 备份系统到线上备库有一条虚线，是指如果由于时间太久，备库上已经删除了临时实例需要的 binlog 的话，我们可以从 binlog 备份系统中找到需要的 binlog，再放回备库中。
+假设，我们发现当前临时实例需要的 binlog 是从 master.000005 开始的，但是在备库上执行 show binlogs 显示的最小的 binlog 文件是 master.000007，意味着少了两个 binlog 文件。
+这时，我们就需要去 binlog 备份系统中找到这两个文件。把之前删掉的 binlog 放回备库的操作步骤，是这样的：
+从备份系统下载 master.000005 和 master.000006 这两个文件，放到备库的日志目录下；
+打开日志目录下的 master.index 文件，在文件开头加入两行，内容分别是 “./master.000005”和“./master.000006”;
+重启备库，目的是要让备库重新识别这两个日志文件；
+现在这个备库上就有了临时库需要的所有 binlog 了，建立主备关系，就可以正常同步了。
+不论是把 mysqlbinlog 工具解析出的 binlog 文件应用到临时库，还是把临时库接到备库上，
+这两个方案的共同点是：误删库或者表后，恢复数据的思路主要就是通过备份，再加上应用 binlog 的方式。
+SP sre
+1、sre的工作职责
+
+5、僵尸进程是咋来的
+再看僵尸进程，这是多进程应用很容易碰到的问题。正常情况下，当一个进程创建了子进程后，它应该通过系统调用 wait() 或者 waitpid() 等待子进程结束，回收子进程的资源；
+而子进程在结束时，会向它的父进程发送 SIGCHLD 信号，所以，父进程还可以注册 SIGCHLD 信号的处理函数，异步回收资源。如果父进程没这么做，或是子进程执行太快，父进程还没来得及处理子进程状态，子进程就已经提前退出，那这时的子进程就会变成僵尸进程。
+换句话说，父亲应该一直对儿子负责，善始善终，如果不作为或者跟不上，都会导致“问题少年”的出现。通常，僵尸进程持续的时间都比较短，在父进程回收它的资源后就会消亡；或者在父进程退出后，由 init 进程回收后也会消亡。一旦父进程没有处理子进程的终止，还一直保持运行状态，那么子进程就会一直处于僵尸状态。
+大量的僵尸进程会用尽 PID 进程号，导致新进程不能创建，所以这种情况一定要避免。
+6、如何查看进程的系统调用，查看进程打开了哪些文件
+strace
+https://blog.csdn.net/delphiwcdj/article/details/7387325?spm=ata.21736010.0.0.786e7124gQomLX
+如何查看进程打开了哪些文件 lsof
+https://linuxtools-rst.readthedocs.io/zh_CN/latest/tool/lsof.html
+7、为什么区分用户态和内核态
+在 CPU 的所有指令中，有些指令是非常危险的，如果错用，将导致系统崩溃，比如清内存、设置时钟等。如果允许所有的程序都可以使用这些指令，那么系统崩溃的概率将大大增加。
+所以，CPU 将指令分为特权指令和非特权指令，对于那些危险的指令，只允许操作系统及其相关模块使用，普通应用程序只能使用那些不会造成灾难的指令。
+比如 Intel 的 CPU 将特权等级分为 4 个级别：Ring0~Ring3。其实 Linux 系统只使用了 Ring0 和 Ring3 两个运行级别(Windows 系统也是一样的)。
+当进程运行在 Ring3 级别时被称为运行在用户态，而运行在 Ring0 级别时被称为运行在内核态。
+8、IO 多路复用，select/epoll
+IO 多路复用是一种同步IO模型，实现一个线程可以监视多个文件句柄；
+一旦某个文件句柄就绪，就能够通知应用程序进行相应的读写操作；
+没有文件句柄就绪就会阻塞应用程序，交出CPU。
+
+服务器端采用单线程通过 select/poll/epoll 等系统调用获取 fd 列表，遍历有事件的 fd 进行 accept/recv/send ，使其能支持更多的并发连接请求。
+9、网络出现丢包的情况下，有什么场景
+1、网络压力大
+2、内存，cpu资源不足
+如何查看网络压力
+
+12、如何查看网络的套接字
+13、四层协议和七层协议，TCP和udp，线程 进程
+进程是资源分配的单位，线程是调度的基本单位
+线程共享进程中的虚拟内存，全局变量等
+14、mysql大表删除
+事先已经将大表rename到了test库。
+先操作备库，再操作主库。
+1） 对大表的数据文件做一个硬连接：
+cd /u01/my3306/data/test
+ln delta_data_life_circle.ibd delta_data_life_circle.ibd.hdlk
+ln delta_publish_job.ibd delta_publish_job.ibd.hdlk
+2) 数据库上操作删表
+set sql_log_bin = 0; drop table test.delta_data_life_circle;
+set sql_log_bin = 0; drop table test.delta_publish_job;
+3) 删除物理文件：
+cd /u01/my3306/data/test
+rm delta_data_life_circle.ibd.hdlk;
+rm delta_publish_job.ibd.hdlk;
+
+原理：利用了操作系统的 Hard Link(硬链接) 的原理。当多个文件名同时指向同一个 iNode 时，这个 iNode 的引用数 N > 1，删除其中任何一个文件名都会很快。
+因为其直接的物理文件块没有被删除，只是删除了一个指针而已；当 iNode 的引用数 N = 1 时，删除文件需要去把这个文件相关的所有数据块清除，所以会比较耗时。
+http://www.penglixun.com/tech/database/mysql_fast_drop_table_use_hard_lin.html
+
+15、mysql 查看sql执行详情
+从show profile中也可以得到验证。
+
+root@dbtest1 04:23:48>set session profiling = 1;
+root@dbtest1 04:25:06>drop table t1;
+root@dbtest1 04:25:17>show profiles;
++----------+------------+---------------+
+| Query_ID | Duration   | Query         |
++----------+------------+---------------+
+|        1 | 0.00194750 | drop table t1 |
++----------+------------+---------------+
+1 row in set, 1 warning (0.00 sec)
+root@dbtest1 04:25:24>show profile for query 1;
++----------------------+----------+
+| Status               | Duration |
++----------------------+----------+
+| starting             | 0.000070 |
+| checking permissions | 0.001737 |
+| query end            | 0.000041 |
+| closing tables       | 0.000010 |
+| freeing items        | 0.000079 |
+| cleaning up          | 0.000011 |
++----------------------+----------+
+6 rows in set, 1 warning (0.00 sec)
+16、mysql 死锁信息
+因为事务加锁是遵循”两阶段封锁协议（two-phase locking protocol）”的，即只有在事务结束（commit或者rollback）时，才会释放整个事务加的所有锁。
+两阶段封锁协议要求每个事务分两个阶段提出加锁和解锁请求：
+a.增长阶段（growing phase）：事务可以获得锁，但不能释放锁；
+b.缩减阶段（shrinking phase）：事务可以释放锁，但不能获得新锁；
+
+两阶段封锁协议作用是什么？
+在并发事务的情况下，保证事务执行的串行化。
+
+死锁的处理
+死锁处理通常有两种方法：
+a.死锁预防（deadlock prevention）: 保证系统永远不进入死锁状态；
+b.死锁检测（deadlock detection）及死锁恢复(deadlock recovery): 允许系统进入死锁状态，然后试用死多检测和死锁恢复机制进行恢复。
+   很容易看出，这两种方法都会引起事务回滚。具体以上两种方法的原理，请参考《数据库系统概念》一书，在此不多解释。
+MySQL在死锁的处理上采用的是死锁检测，当检测到死锁后，选择其中代价较少的一个事务进行回滚。
+MySQL5.6版本之前，死锁只能通过SHOW ENGINE INNODB STATUS命令，查看最后的一个死锁信息。当然可以定期采集死锁信息记录在某个文件中，Percona的pt-deadlock-logger工具可实现。
+MySQL5.6版本，有个新的参数innodb_print_all_deadlocks，可以控制将所有死锁信息输出到mysqld的error日志文件中。
+补充：比较好的习惯是，在应用中捕获deadlock error（MySQL error no. 1213）并且重试事务。
+https://www.cnblogs.com/wy123/p/9272762.html
+
+MySQL 死锁发生的前提是多于2个事务互相等待锁，但是INNODB STATUS中LATEST DETECTED DEADLOCK信息只有最后2个事务的信息。
+另外，死锁信息中也只记录了最后执行的sql语句，没有记录的sql语句可能才是真正持有或请求锁的语句。所以，分析死锁还需要从代码层面根据死锁记录的sql语句找完整的事务sql语句。另外，持有锁的事务一般是第二个事务。
+
+如何避免死锁？
+a)降低事务复杂度，一个事务里包含太多sql，在高并发情况下很容易产生死锁，所以避免使用复杂的大事务；
+b)不要使用外键，唯一键不要过于长、复杂；
+c)如果是因为GAP 锁导致的死锁，那么可以将事务隔离级别修改为RC避免GAP锁解决；
+d) 死锁一般都是加锁顺序不一致导致的
+总结
+a)死锁的概念；
+b)应用需要捕捉死锁错误，当发现死锁时进行事务重试；
+c)MySQL 死锁信息分析；
+d)避免死锁的方法；
+e)还有一个很重要的点，就是了解MySQL加锁的原理，什么时候加什么锁，这个登博文章说的再清楚不过了
+
+
+https://www.cnblogs.com/tutar/p/5878651.html
+17. replace into
+如果一个表同时存在唯一索引和主键索引
+
+root@test 11:27:51>CREATE TABLE `lingluo` (
+    ->   `a` int(11) NOT NULL DEFAULT '0',
+    ->   `b` int(11) DEFAULT NULL,
+    ->   `c` int(11) DEFAULT NULL,
+    ->   `d` int(11) DEFAULT NULL,
+    ->   PRIMARY KEY (`a`),                   同时存在主键索引和
+    ->   UNIQUE KEY `uk_bc` (`b`,`c`)         唯一索引
+    -> ) ENGINE=InnoDB DEFAULT CHARSET=gbk;
+Query OK, 0 rows affected (0.00 sec)
+
+root@test 11:27:59>replace into lingluo values(1,10000,3,4);   表里没有记录相当于insert
+Query OK, 1 row affected (0.00 sec)                            affect_rows 是 1
+
+root@test 11:28:13>select * from lingluo;
++---+-------+------+------+
+| a | b     | c    | d    |
++---+-------+------+------+
+| 1 | 10000 |    3 |    4 |
++---+-------+------+------+
+1 row in set (0.00 sec)
+
+root@test 11:28:59>replace into lingluo values(1,10000,3,5);     uk和pk同时存在冲突时，相当于delete + insert
+Query OK, 2 rows affected (0.00 sec)                             affect_rows 是 2
+
+root@test 11:29:11>select * from lingluo;
++---+-------+------+------+
+| a | b     | c    | d    |
++---+-------+------+------+
+| 1 | 10000 |    3 |    5 |
++---+-------+------+------+
+1 row in set (0.00 sec)
+
+root@test 11:29:12>replace into lingluo values(1,10000,4,5);    pk存在冲突时，相当于 delete + insert
+Query OK, 2 rows affected (0.00 sec)                            affect_rows 是 2
+
+root@test 11:29:51>select * from lingluo;
++---+-------+------+------+
+| a | b     | c    | d    |
++---+-------+------+------+
+| 1 | 10000 |    4 |    5 |
++---+-------+------+------+
+1 row in set (0.00 sec)
+
+root@test 11:29:54>replace into lingluo values(4,10000,6,5); 
+Query OK, 1 row affected (0.00 sec)
+
+root@test 11:30:21>select * from lingluo;
++---+-------+------+------+
+| a | b     | c    | d    |
++---+-------+------+------+
+| 1 | 10000 |    4 |    5 |
+| 4 | 10000 |    6 |    5 |
++---+-------+------+------+
+2 rows in set (0.00 sec)
+
+root@test 11:30:23>replace into lingluo values(6,10000,6,5); uk存在冲突时，相当于update
+Query OK, 2 rows affected (0.00 sec)                          affect_rows 是 2
+
+root@test 11:30:36>select * from lingluo;
++---+-------+------+------+
+| a | b     | c    | d    |
++---+-------+------+------+
+| 1 | 10000 |    4 |    5 |
+| 6 | 10000 |    6 |    5 |
++---+-------+------+------+
+2 rows in set (0.00 sec)
+
+结论：
+当存在pk冲突的时候是先delete再insert
+当存在uk冲突的时候是直接update
+18、故障处理流程
+1.接到报警后，判断是否为故障及影响范围
+2.如果是故障，请在“数据库团队”群里报告：故障情况
+3.10分钟处理事故
+4.若10分钟后无法明确评估原因及恢复时间，切换服务到备库。
+
+
+1.收到负载过高的报警
+2.查看iostat 看是否是io导致的： iostat -x 1
+3.查看cpu: top
+4.查看内存及swap： vmstat 1
+5.查看mysql进程： tbsql session | grep -v Sleep
+6.查看qps及tps： orzdba -lazy
+7.对于select，可以先kill再通知pe和开发
+  (和过去不同的地方，过去我们要先确认能不能kill，这会带来一定的处理延迟。经过这次故障，我们在直通车上可以采取主动，这也要求我们对项目的慢查询要更加敏感。)
+
+
+19、DDL规范
+(1)在添加索引之前，需要评估执行时间，非核心表，超过1分钟的DDL操作，需要在业务低峰的时候执行,核心表的操作都需要在业务低峰时间操作，并与开发沟通操作时间。
+评估方法：在备库上select *的时间*3，或1G一分钟的时间评估。或1w数据1s来评估。
+
+4. 添加索引或删除索引：
+(1)在添加索引之前，需要评估执行时间，非核心表，超过1分钟的DDL操作，需要在业务低峰的时候执行,核心表的操作都需要在业务低峰时间操作，并与开发沟通操作时间。
+评估方法：在备库上select *的时间*3，或1G一分钟的时间评估。或1w数据1s来评估。
+(2)在添加唯一索引前，与开发沟通重复数据的处理问题。
+(3)针对DDL操作5分钟的操作，需在备库操作完成后，切换主备，再从主库执行，并且执行DDL语句前，set session sql_log_bin=0;
+(4)针对大表DDL，需检查服务器的磁盘空间，必须大于表的大小并且还有一定的余量。
+(5)可以使用OSC这种方式，如MyDDL等，在线无阻塞修改表的方式。
+
+
+
+20、和mysql相比，ob有啥优势
+mysql           OB
+innodb b+tree   LSM tree 只读的基线数据SSTable+增量数据memtable
+数据一致性 Paxos
+分布式数据库，线性扩展 分片，支持二级分区
+分布式事务 两阶段提交协议（prepare+commit）
+隔离级别
+
+
+
+22、namespace和Cgroups的原理
+
+23、孤儿进程和僵尸进程
+孤儿进程：一个父进程退出，而它的一个或多个子进程还在运行，那么那些子进程将成为孤儿进程。孤儿进程将被init进程（进程号为1）所收养，并由init进程对它们完成状态收集工作；
+僵尸进程：一个进程使用fork创建子进程，如果子进程退出，而父进程并没有调用wait或waitpid获取子进程的状态信息，那么子进程的进程描述符仍然保存在系统中。这种进程称之为僵死进程（也就是进程为中止状态，僵死状态）。
+
+24、obproxy故障转移时
+25、进程有哪几种状态
+就绪态
+运行态
+阻塞态
+26、进程创建的整个流程
+在Linux系统中，除了系统启动之后的第一个进程由系统来创建，其余的进程都必须由已存在的进程来创建，新创建的进程叫做子进程，而创建子进程的进程叫做父进程。
+那个在系统启动及完成初始化之后，Linux自动创建的进程叫做根进程。根进程是Linux中所有进程的祖宗，其余进程都是根进程的子孙。具有同一个父进程的进程叫做兄弟进程。
+
+在Linux中，父进程以分裂的方式来创建子进程，创建一个子进程的系统调用叫做fork()。
+
+系统调用fork()
+为了在一个进程中分裂出子进程，Linux提供了一个系统调用fork()。这里所说的分裂，实际上是一种复制。因为在系统中表示一个进程的实体是进程控制块，创建新进程的主要工作就是要创建一个新控制块，而创建一个新控制块最简单的方法就是复制。
+
+当然，这里的复制并不是完全复制，因为父进程控制块中某些项的内容必须按照子进程的特性来修改，例如进程的标识、状态等。另外，子进程控制块还必须要有表示自己父进程的域和私有空间，例如数据空间、用户堆栈等。下面的两张图就表示父进程和相对应的子进程的内存映射：
+
+
+
+27、进程和线程的区别
+28、能ping 通，但是ssh登不上
+能ping通代表网络没有问题
+1、ssh连接不上，可以是没有安装ssh，或者ssh服务未启动
+2、linux 防火墙
+3、需要确认是否是SSH服务的端口问题，核对连接端口（ /etc/ssh/sshd_config）
+29、HTTP和HTTPs的区别
+HTTP	HTTPS
+默认端口80	HTTPS默认使用端口443
+明文传输、数据未加密、安全性差	传输过程ssl加密、安全性较好
+响应速度快、消耗资源少	响应速度较慢、消耗资源多、需要用到CA证书
+HTTPS链接建立的过程：
+1.首先客户端先给服务器发送一个请求
+2.服务器发送一个SSL证书给客户端，内容包括：证书的发布机构、有效期、所有者、签名以及公钥
+3.客户端对发来的公钥进行真伪校验，校验为真则使用公钥对对称加密算法以及对称密钥进行加密
+4.服务器端使用私钥进行解密并使用对称密钥加密确认信息发送给客户端
+5.随后客户端和服务端就使用对称密钥进行信息传输
+
+30、查看当前机器打开的端口
+列出所有 tcp 端口 netstat -at
+31、SSD和HDD的区别
+我们可以看到，SSD和HDD的主要区别为:
+● 定位数据：HDD需要经过寻道和旋转定位到要读写的数据块，而SSD通过mapping table直接计算。
+● 读取速度：HDD读取速度取决于旋转速度，而SSD只需要加电压读取数据，要快于HDD。
+在顺序读测试中，由于定位数据只需要一次，定位之后，则是大批量的读取数据的过程，此时，HDD和SSD的性能差距主要体现在读取速度上，HDD能到200M左右，而普通SSD是其两倍。
+在随机读测试中，由于每次读都要先定位数据，然后再读取，HDD的定位数据的耗费时间很多，从几毫秒到十几毫秒，远高于SSD的定位数据时间。随机读写测试主要体现在两者定位数据的速度上，此时，SSD的性能远好于HDD。
+对于SSD的写操作，针对不同的情况，有不同的处理流程，主要是受到NAND Flash特性限制。
+● NAND
+Flash每次写必须以page为单位，且只能写入空闲的page，不能覆盖写原先有内容的page。
+● 擦除数据时，只能以block为单位擦除。
+OB和mysql的区别
+高可用方案
+sql优化
+索引结构
+硬连接和软连接
+32、host 通过ip反解析dns   nslookup 通过DNS解析ip
+33、Online DDL
+https://yuque.antfin-inc.com/dewei.dw/yftgsq/ui1p06
+34、OB的online ddl，物理备份
+35、遇到压力比较大的时候，怎么做，
+36、show processlist; 长连接，
+SELECT * FROM INFORMATION_SCHEMA.PROCESSLIST WHERE COMMAND <> 'sleep' AND TIME>100;
+
+time 单位s
+37、长事务 
+
+38、监控，全量抓取日志
+
+
+40、有个长事务未提交，备份进程申请全局读锁卡住，但是后面把备份线程kill掉，原来的查询还是卡住的，新来的查询没有问题  table_cache 问题
+41、kill不掉的连接
+
+42、buffer pool原来是40G，现在是80G，buffer pool里面有啥
+44、走上了覆盖索引，但是回表了
+45、死锁和锁等待
+46、半同步和增量半同步，AFTER SYNC和AFTER COMMIT
+MySQL 5.7增强半同步的AFTER SYNC和AFTER COMMIT
+AFTER SYNC：
+实际上，客户端发出commit请求后，在主库上写入binlog并推送给slave，slave接收到binlog并写入relaylog，发送ACK确认已经接收binlog后，master在引擎层commit，客户端接收commit完成，此时其他会话才可以看见已提交的数据。
+AFTER COMMIT：
+after commit是MySQL5.6半同步参数，区别于after sync，after sync是在接收ack确认以后主库在引擎层做提交，而after commit是先在引擎层做提交后等待ACK确认。因此，在写入数据后并且在从库确认之前，其他的客户端可以看到在这一事务。
+
+官方SQL
+SELECT
+  r.trx_id waiting_trx_id,
+  r.trx_mysql_thread_id waiting_thread,
+  r.trx_query waiting_query,
+  b.trx_id blocking_trx_id,
+  b.trx_mysql_thread_id blocking_thread,
+  b.trx_query blocking_query,
+  b.trx_started trx_started,
+  b.trx_wait_started trx_wait_started
+FROM       information_schema.innodb_lock_waits w
+INNER JOIN information_schema.innodb_trx b
+  ON b.trx_id = w.blocking_trx_id
+INNER JOIN information_schema.innodb_trx r
+  ON r.trx_id = w.requesting_trx_id;
+OPTIMIZER_TRACE使用
+SET OPTIMIZER_TRACE="enabled=on",END_MARKERS_IN_JSON=on;
+SET optimizer_trace_offset=-30, optimizer_trace_limit=30;
+/
+/* 打开optimizer_trace，只对本线程有效 */
+SET optimizer_trace='enabled=on'; 
+
+/* 打开optimizer_trace，设置日志长度 */
+SET OPTIMIZER_TRACE_MAX_MEM_SIZE=1000000;
+
+/* @a保存Innodb_rows_read的初始值 */
+select VARIABLE_VALUE into @a from  performance_schema.session_status where variable_name = 'Innodb_rows_read';
+
+/* 执行语句 */
+select .....具体的业务sql 
+
+/* 查看 OPTIMIZER_TRACE 输出 */
+SELECT trace FROM `information_schema`.`OPTIMIZER_TRACE`\G
+
+/* @b保存Innodb_rows_read的当前值 */
+select VARIABLE_VALUE into @b from performance_schema.session_status where variable_name = 'Innodb_rows_read';
+
+/* 计算Innodb_rows_read差值 */
+select @b-@a;
+
+/* 关闭该功能 */
+SET optimizer_trace="enabled=off";
+show profile
+https://help.aliyun.com/document_detail/204734.html
+47、mysql MGR架构的优势
+
+
+● 性能上，测试的ECS环境已经保证了极低的跨机延迟，MGR相比单机系统产生了超过25%的损耗，还有很大的优化空间。
+● 可用性上，尽管使用了Paxos这样的多数派协议，单个节点的故障会对整个集群造成明显的扰动。这个看上去是协议实现的缺陷。
+● 多点写的亮点是可以智能的进行冲突处理，但是效率并不高。完全无冲突的环境下，扩展性也仅仅提高了20%。相比之下，市面上多租户或者分库分表的成熟方案基本都能做到线性增长，MGR毫无优势。
+● 读扩展上，强一致性读受制于Binlog复制的性能，排除掉EVENTUAL，官方给出的三种的强一致性读选项，从实测表现来看，难以说服客户去使用。
+48、semi-join，anti-join
+
+49、分库分表需要考虑
+准备工作
+这是一次架构的升级，需要应用、数据库相互配合完成。
+● 在线库历史库分开，避免分析类业务影响在线业务；
+● 根据在线业务QPS、TPS、数据量及业务未来增长规模确定好分库及分表个数；
+● 在iDB中申请新的分库分表
+● 选择合适的拆分键
+● 单库单表中新增拆分健字段
+拆分键选择依据
+● 选择值分布均匀的列，避免数据倾斜；
+● 选择大部分SQL都使用的where条件列
+● 表join的列，如果有多个表进行join，选择参与join的列
+50、
+6. 预习文档：
+LSM树综述：https://zhuanlan.zhihu.com/p/351241814
+深入浅出LevelDB：https://mrcroxx.github.io/categories/%E6%B7%B1%E5%85%A5%E6%B5%85%E5%87%BAleveldb/
+Amazon Aurora解读：https://dbaplus.cn/news-160-1748-1.html
+TiDB整体架构：https://docs.pingcap.com/zh/tidb/stable/tidb-architecture
+TiDB存储架构：https://docs.pingcap.com/zh/tidb/stable/tidb-storage
+OB数据库存储架构：https://www.oceanbase.com/docs/oceanbase-database/oceanbase-database/V3.2.1/overview-4
+OB数据存储管理：https://www.oceanbase.com/docs/oceanbase-database/oceanbase-database/V3.2.1/consolidation-management-overview
+OB数据库压缩特性：https://zhuanlan.zhihu.com/p/49161275
+7. 参考文献：
+7.1. 传统数据库
+● 《数据库管理系统实现基础讲义》:https://github.com/oceanbase/oceanbase/blob/master/docs/docs/lectures/index.md
+● PostgreSQL物理存储介绍：http://rachbelaid.com/introduction-to-postgres-physical-storage/
+● 《MySQL技术内幕》：https://book.douban.com/subject/24708143/
+● 《MySQL B+树并发控制机制前世今生》：http://mysql.taobao.org/monthly/2018/09/01/
+● 《Coarse-Gr Coarse-Grained, Fine-Gr ained, Fine-Grained, and Lock-F ained, and Lock-Free Concurr ee Concurrency Approaches for Self-Balancing B-Tree》 : https://digitalscholarship.unlv.edu/cgi/viewcontent.cgi?article=4733&context=thesesdissertations
+7.2. Share Disk架构
+● Aurora原始论文:https://www.allthingsdistributed.com/files/p1041-verbitski.pdf
+● Amazon Aurora解读：https://dbaplus.cn/news-160-1748-1.html
+● Amazon Aurora解读2: https://blog.acolyer.org/2019/03/25/amazon-aurora-design-considerations-for-high-throughput-cloud-native-relational-databases/
+● 腾讯云TDSQL-C架构解析:https://www.modb.pro/db/53642
+7.3. LSM树及BigTable
+● LSM论文1996：https://www.cs.umb.edu/~poneil/lsmtree.pdf
+● LSM树综述：https://zhuanlan.zhihu.com/p/351241814
+● 深入浅出LevelDB：https://mrcroxx.github.io/categories/%E6%B7%B1%E5%85%A5%E6%B5%85%E5%87%BAleveldb/
+● RCFile格式参考：https://cloud.tencent.com/developer/article/1328762
+● BigTable论文2006:https://static.googleusercontent.com/media/research.google.com/zh-CN//archive/bigtable-osdi06.pdf
+7.4. 分布式数据库
+● Spanner论文(2012): https://static.googleusercontent.com/media/research.google.com/zh-CN//archive/spanner-osdi2012.pdf
+● Spanner论文(2017):https://static.googleusercontent.com/media/research.google.com/zh-CN//pubs/archive/46103.pdf
+● Google Spanner论文解读:https://cloud.tencent.com/developer/article/1131036
+● TiDB整体架构：https://docs.pingcap.com/zh/tidb/stable/tidb-architecture
+● TiDB存储架构：https://docs.pingcap.com/zh/tidb/stable/tidb-storage
+● TiDB博客全系列：https://pingcap.com/zh/blog/
+● OB数据库存储架构：https://www.oceanbase.com/docs/oceanbase-database/oceanbase-database/V3.2.1/overview-4
+● OB数据存储管理：https://www.oceanbase.com/docs/oceanbase-database/oceanbase-database/V3.2.1/consolidation-management-overview
+● OB数据库压缩特性：https://zhuanlan.zhihu.com/p/49161275
+● OB存储引擎详解：https://www.modb.pro/db/137286
+● OB博客文章全系列：https://open.oceanbase.com/articles
+● OB TPCC结果：http://tpc.org/tpcc/results/tpcc_results5.asp?print=false&orderby=tpm&sortby=desc
+● OB TPCC测试细节：https://developer.aliyun.com/article/761887
+7.5. 其他
+● LZ4 Benchmark : https://github.com/lz4/lz4
+51、show engine innodb status\G
+
+https://www.cnblogs.com/xiaoboluo768/p/5171425.html
+
+LOG
+---
+Log sequence number 244239455410203
+Log flushed up to   244239455410006
+Pages flushed up to 244239216176344
+Last checkpoint at  244239213305491
+0 pending log flushes, 0 pending chkp writes
+51574102444 log i/o's done, 588.50 log i/o's/second
+日志解析：https://blog.csdn.net/yunhua_lee/article/details/6567869?ops_request_misc=%257B%2522request%255Fid%2522%253A%2522165631177816781683965120%2522%252C%2522scm%2522%253A%252220140713.130102334.pc%255Fblog.%2522%257D&request_id=165631177816781683965120&biz_id=0&utm_medium=distribute.pc_search_result.none-task-blog-2~blog~first_rank_ecpm_v1~rank_v31_ecpm-1-6567869-null-null.nonecase&utm_term=innodb&spm=1018.2226.3001.4450
+分别对应下面四个LSN
+Log sequence number（LSN1）：当前系统LSN最大值，新的事务日志LSN将在此基础上生成（LSN1+新日志的大小）；
+Log flushed up to（LSN2）：当前已经写入日志文件的LSN；
+Oldest modified data log（LSN3）：当前最旧的脏页数据对应的LSN，写Checkpoint的时候直接将此LSN写入到日志文件；
+Last checkpoint at（LSN4）：当前已经写入Checkpoint的LSN；
+
+
+Buffer Pool instance 官方文档要求1G以上
+Buffer Pool instance，大小等于innodb_buffer_pool_size/innodb_buffer_pool_instances，每个Buffer Pool Instance都有自己的锁，信号量，物理块(Buffer chunks)以及逻辑链表(List)。
+即各个instance之间没有竞争关系，可以并发读取与写入。所有instance的物理块(Buffer chunks)在数据库启动的时候被分配，直到数据库关闭内存才予以释放。每个Buffer Pool Instance有一个page hash链表，
+通过它，使用space_id和page_no就能快速找到已经被读入内存的数据页，而不用线性遍历LRU List去查找。当前innodb_buffer_pool_instances是1，也就是Buffer Pool 只有一个instance，那这个instance的锁就会成为热点，导致CPU升高。
+
+buffer pool: 
+缓存数据--众所周知，这个占了buffer pool的大半空间
+缓存目录--数据字典
+insert buffer
+排序的内部结构--比如自适应hash的结构或者一些行锁
+存储数据、索引、undo、自适应索引等分配的内存大小，影响innodb性能最重要的选项，一般设置为物理内存的80%。
+
+----------------------
+BUFFER POOL AND MEMORY
+----------------------
+Total memory allocated 4395630592; in additional pool allocated 0
+Dictionary memory allocated 28892957
+Buffer pool size   262143
+Free buffers       0
+Database pages     258559
+Old database pages 95424
+Modified db pages  36012
+Pending reads 0
+Pending writes: LRU 0, flush list 0, single page 0
+Pages made young 72342127, not young 0
+8.82 youngs/s, 0.00 non-youngs/s
+Pages read 72300801, created 339791, written 13639066
+8.56 reads/s, 0.35 creates/s, 3.79 writes/s
+Buffer pool hit rate 1000 / 1000, young-making rate 0 / 1000 not 0 / 1000
+Pages read ahead 0.00/s, evicted without access 0.00/s, Random read ahead 0.00/s
+LRU len: 258559, unzip_LRU len: 0
+I/O sum[459]:cur[1], unzip sum[0]:cur[0]
+● Buffer pool size表示缓冲池共有262143个page，即262143 * 16K，约为4GB
+● Free buffers表示当前Free列表中page的数量
+● Database pages表示LRU列表中page的数量
+● Old database pages表示LRU列表中old部分的page数量
+● Modified db pages表示的是脏页(dirty page)的数量
+● Pages made young表示LRU列表中page移动到new部分的次数
+● youngs/s, non-youngs/s表示每秒这两种操作的次数
+● Buffer pool hit rate表示缓冲池的命中率，该值若小于95%，需要观察是否全表扫描引起LRU污染
+● LRU len表示LRU中总page数量
+可以看到Free buffers与Database pages的和不等于Buffer pool size，这是因为缓冲池中的页还会被分配给自适应哈希索引，Lock信息，Insert Buffer等页，这部分页不需要LRU算法维护。
+52、影响最深的case
+https://yuque.antfin-inc.com/oba/obcases/iauh4a
+https://yuque.antfin.com/antdba/onlinerisk/bryrnz
+53、MVCC RC和RR sql的执行过程
+MVCC
+1、每条行记录都会记录数据版本号，读写操作并发 写写操作通过锁来实现并发控制
+2、当前读 
+  快照读	RC RR
+54、sql的执行顺序
+一条完整的SELECT语句内部的执行顺序是这样的：
+
+FROM子句组装数据（包括通过ON进行连接）；
+WHERE子句进行条件筛选；
+GROUP BY分组 ；
+使用聚集函数进行计算；
+HAVING筛选分组；
+计算所有的表达式；
+SELECT 的字段；
+ORDER BY排序；
+LIMIT筛选。
+55、链接数打满
+● 空闲链接过多
+  ○ kill 空闲链接
+  ○ 修改应用，长连接模式需要启用连接池的复用功能（建议也启用连接检测功能）。
+  ○ 修改应用，短连接模式需要在代码中修改查询结束后调用关闭连接的方法。
+  ○ wait_timeout和interactive_timeout这两个参数的修改
+● 活跃链接过多
+  ○ 慢查询SQL增多导致活动连接数堆积。
+  ○ 锁等待导致活动连接数堆积（包括InnoDB锁等待、表元数据锁等待）。
+  ○ CPU使用率过高导致活动连接数堆积。
+  ○ IOPS使用率高导致活动连接数堆积。
+应急处理
+● 修改数据库的连接数
+● 修改配置文件中的 链接数参数，后重启机器
+● 修改数据库的链接数，如果无法登陆mysql实例
+  ○ gdb -p $(cat data/kalacloud.pid) \ -ex "set max_connections=5000" -batch
+  ○ 特别是生产环境，有可能导致进程down
+
+● https://kb.aliyun-inc.com/kb/94566
+
+56、group by详解
+松散索引扫描实现Group By
+通过该访问方法，MySQL使用某些关键字排序的索引类型的属性。该属性允许使用索引中的查找组，而不需要考虑满足所有WHERE条件的索引中的所有关键字。意思是索引中用于group的字段，没必要包含多列索引的全部字段。比如：有一个索引idx(c1,c2,c3)，索引中用于group的字段符合索引的“最左前缀”原则即可，比如group by c1、group by c1,c2。group by c1,c3是不会使用松散的索引扫描的。
+既然该访问方法只考虑索引中的关键字的一小 部分，它被称为松散索引列表。
+松散索引列表需要满足的条件：
+1. 查询针对一个单表
+2. GROUP BY 条件字段必须在同一个索引中最前面的连续位置（最左前缀）
+3. 在使用GROUP BY 的同时，如果有聚合函数，只能使用 MAX 和 MIN 这两个聚合函数，并且它们均指向相同的列。
+4. 如果引用(where条件中)到了该索引中GROUP BY 条件之外的字段条件的时候，必须以常量形式存在，但MIN()或MAX() 函数的参数例外
+5. 如果查询中有where条件，则条件必须为索引，不能包含非索引的字段
